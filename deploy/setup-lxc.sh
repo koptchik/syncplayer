@@ -16,7 +16,10 @@ getent passwd syncplayer >/dev/null || useradd --system --home-dir /var/lib/sync
 [[ -f "$REPO/deploy/deploy.sh" && -f "$REPO/package-lock.json" ]] || { echo "Clone git@github.com:koptchik/syncplayer.git into $REPO first." >&2; exit 1; }
 
 install -d -o root -g root -m 0755 "$APP"
-install -d -o deploy -g deploy -m 0755 "$APP/releases"
+install -d -o deploy -g syncplayer -m 2750 "$APP/releases"
+chgrp -R syncplayer "$APP/releases"
+find "$APP/releases" -type d -exec chmod g+rx {} +
+find "$APP/releases" -type f -exec chmod g+r {} +
 install -d -o deploy -g deploy -m 0750 "$REPO"
 install -d -o root -g root -m 0755 /etc/syncplayer
 install -d -o deploy -g deploy -m 0700 /home/deploy/.ssh
