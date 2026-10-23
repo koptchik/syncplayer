@@ -1,0 +1,32 @@
+[Unit]
+Description=Syncplayer watch-together server
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=exec
+User=syncplayer
+Group=syncplayer
+WorkingDirectory=/opt/syncplayer/current
+EnvironmentFile=/etc/syncplayer.env
+Environment=NODE_ENV=production
+ExecStart=/opt/syncplayer/node/bin/node /opt/syncplayer/current/src/server/index.mjs
+Restart=on-failure
+RestartSec=3
+TimeoutStopSec=30
+UMask=0027
+StateDirectory=syncplayer
+StateDirectoryMode=0750
+NoNewPrivileges=yes
+PrivateTmp=yes
+ProtectSystem=strict
+ProtectHome=yes
+ProtectKernelTunables=yes
+ProtectKernelModules=yes
+ProtectControlGroups=yes
+LockPersonality=yes
+RestrictSUIDSGID=yes
+ReadWritePaths=/var/lib/syncplayer
+
+[Install]
+WantedBy=multi-user.target
