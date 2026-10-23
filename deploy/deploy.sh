@@ -33,27 +33,7 @@ if [[ ! -d "$RELEASE" ]]; then git -C "$REPO" worktree add --detach "$RELEASE" "
 "$NODE" --version | grep -Eq '^v24\.'
 "$NPM" --prefix "$RELEASE" ci --omit=dev --no-audit --no-fund
 
-PREVIOUS="$(readlink "$CURRENT" 2>/dev/null || true)"
-NEXT="$ROOT/.current-$COMMIT"
-ln -sfn "$RELEASE" "$NEXT"
-mv -Tf "$NEXT" "$CURRENT"
-
-healthy=false
-if sudo -n /usr/bin/systemctl restart syncplayer; then
-  for _ in {1..15}; do
-    if curl --fail --silent --show-error --max-time 2 "$HEALTH_URL" >/dev/null; then healthy=true; break; fi
-    sleep 2
-  done
-fi
-if [[ "$healthy" != true ]]; then
-  if [[ -n "$PREVIOUS" ]]; then
-    ln -sfn "$PREVIOUS" "$NEXT"
-    mv -Tf "$NEXT" "$CURRENT"
-    sudo -n /usr/bin/systemctl restart syncplayer || true
-  else
-    sudo -n /usr/bin/systemctl stop syncplayer || true
-  fi
-  echo "Deployment failed health check; previous release restored." >&2
+if ! sudo -n /usr/local/sbin/syncplayer-switch-release "$COMMIT"; then
+  echo "Deployment failed; previous release restored." >&2
   exit 1
 fi
-printf 'Syncplayer is healthy at %s\n' "$COMMIT"

@@ -1,0 +1,7 @@
+Host github.com
+    HostName github.com
+    User git
+    IdentityFile /home/deploy/.ssh/github_syncplayer_deploy
+    IdentitiesOnly yes
+    StrictHostKeyChecking yes
+    UserKnownHostsFile /home/deploy/.ssh/known_hosts

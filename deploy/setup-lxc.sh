@@ -15,13 +15,16 @@ getent passwd syncplayer >/dev/null || useradd --system --home-dir /var/lib/sync
 [[ -s "$DEPLOY_KEY" && -s "$DEPLOY_KEY.pub" ]] || { echo "Create the read-only GitHub deploy key at $DEPLOY_KEY and add it to repository settings first." >&2; exit 1; }
 [[ -f "$REPO/deploy/deploy.sh" && -f "$REPO/package-lock.json" ]] || { echo "Clone git@github.com:koptchik/syncplayer.git into $REPO first." >&2; exit 1; }
 
-install -d -o deploy -g deploy -m 0750 "$APP" "$APP/releases"
+install -d -o root -g root -m 0755 "$APP"
+install -d -o deploy -g deploy -m 0755 "$APP/releases"
 install -d -o deploy -g deploy -m 0750 "$REPO"
-install -d -o root -g root -m 0755 /opt/syncplayer
 install -d -o root -g root -m 0755 /etc/syncplayer
 install -d -o deploy -g deploy -m 0700 /home/deploy/.ssh
 install -m 0644 -o root -g root "$REPO/deploy/github.com.known_hosts" /etc/syncplayer/github.com.known_hosts
 install -m 0644 -o root -g root "$REPO/deploy/syncplayer.service" /etc/systemd/system/syncplayer.service
+install -m 0755 -o root -g root "$REPO/deploy/switch-release" /usr/local/sbin/syncplayer-switch-release
+install -m 0644 -o deploy -g deploy "$REPO/deploy/github.com.known_hosts" /home/deploy/.ssh/known_hosts
+install -m 0600 -o deploy -g deploy "$REPO/deploy/github.sshconfig" /home/deploy/.ssh/config
 install -m 0755 -o deploy -g deploy "$REPO/deploy/deploy.sh" "$APP/deploy.sh"
 
 NODE_PREFIX="$APP/node-v${NODE_VERSION}"
@@ -53,7 +56,7 @@ chown root:syncplayer /etc/syncplayer.env
 chmod 0640 /etc/syncplayer.env
 
 cat > /etc/sudoers.d/syncplayer-deploy <<'SUDOERS'
-deploy ALL=(root) NOPASSWD: /usr/bin/systemctl restart syncplayer
+deploy ALL=(root) NOPASSWD: /usr/local/sbin/syncplayer-switch-release *
 SUDOERS
 chmod 0440 /etc/sudoers.d/syncplayer-deploy
 visudo --check --file=/etc/sudoers.d/syncplayer-deploy

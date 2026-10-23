@@ -1,0 +1,52 @@
+#!/usr/bin/env bash
+set -Eeuo pipefail
+
+ROOT=/opt/syncplayer
+RELEASES="$ROOT/releases"
+CURRENT="$ROOT/current"
+
+if [[ "$(id -u)" != 0 || "$#" != 1 || ! "$1" =~ ^[a-f0-9]{40}$ ]]; then
+  echo 'Usage: syncplayer-switch-release <40-character commit SHA>' >&2
+  exit 2
+fi
+
+RELEASE="$RELEASES/$1"
+if [[ ! -d "$RELEASE" || -L "$RELEASE" ]]; then
+  echo "Release not found: $1" >&2
+  exit 1
+fi
+RELEASE_REAL="$(realpath -e -- "$RELEASE")"
+case "$RELEASE_REAL" in
+  "$RELEASES"/*) ;;
+  *) echo 'Release path is outside the managed releases directory.' >&2; exit 1 ;;
+esac
+
+PREVIOUS="$(readlink -e -- "$CURRENT" 2>/dev/null || true)"
+NEXT="$ROOT/.current-$BASHPID"
+ln -s -- "$RELEASE_REAL" "$NEXT"
+mv -Tf -- "$NEXT" "$CURRENT"
+
+restore_previous() {
+  if [[ -n "$PREVIOUS" && -d "$PREVIOUS" ]]; then
+    ln -sfn -- "$PREVIOUS" "$NEXT"
+    mv -Tf -- "$NEXT" "$CURRENT"
+    systemctl restart syncplayer || true
+  else
+    systemctl stop syncplayer || true
+  fi
+}
+
+if ! systemctl restart syncplayer; then
+  restore_previous
+  exit 1
+fi
+for _ in {1..15}; do
+  if curl --fail --silent --show-error --max-time 2 http://127.0.0.1:3000/api/health >/dev/null; then
+    printf 'Syncplayer release %s is healthy.\n' "$1"
+    exit 0
+  fi
+  sleep 2
+done
+printf 'Health check failed for %s; restoring previous release.\n' "$1" >&2
+restore_previous
+exit 1

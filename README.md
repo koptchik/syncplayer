@@ -111,11 +111,12 @@ npm audit           # известные уязвимости зависимос
 
 Для выкладки создай в GitHub репозитории отдельный **read-only Deploy key**. LXC должен работать под отдельным пользователем `deploy`, а приложение — под системным пользователем `syncplayer`.
 
-1. На LXC создай SSH-ключ без парольной фразы для клонирования только этого репозитория: `/home/deploy/.ssh/github_syncplayer_deploy`. Добавь файл `.pub` как deploy key репозитория без `Allow write access`. Закреплённый SSH host key GitHub хранится в `deploy/github.com.known_hosts`.
-2. Пользователем `deploy` клонируй репозиторий в `/opt/syncplayer/repo`.
-3. От root в LXC запусти `bash /opt/syncplayer/repo/deploy/setup-lxc.sh`. Скрипт проверяет SHA-256 официального Node.js 24.22.1, устанавливает unit systemd и `.env`, создаёт service account и разрешает `deploy` только перезапуск `syncplayer`.
-4. Пользователем `deploy` выполни `/opt/syncplayer/deploy.sh main`.
+1. Создай отдельный ключ для LXC и добавь его как **read-only Deploy key** в Settings → Deploy keys репозитория. На этом LXC ключ уже создан: `syncplayer-lxc-readonly`. Его публичную часть выведи командой `cat /home/deploy/.ssh/github_syncplayer_deploy.pub`; не включай Allow write access.
+2. В Proxmox создай каталог для checkout: `pct exec 100 -- install -d -o deploy -g deploy -m 0755 /opt/syncplayer`.
+3. Под пользователем `deploy` клонируй `git@github.com:koptchik/syncplayer.git` в `/opt/syncplayer/repo`. При первом SSH-подключении GitHub проверь host key; закреплённый ED25519 host key включён в `deploy/github.com.known_hosts`.
+4. В консоли Proxmox от root запусти `bash /opt/syncplayer/repo/deploy/setup-lxc.sh`. Скрипт проверяет SHA-256 официального Node.js 24.22.1, устанавливает systemd unit и `/etc/syncplayer.env`, создаёт изолированный service account и разрешает `deploy` запускать только root-owned переключатель релизов.
+5. Под `deploy` запусти `/opt/syncplayer/deploy.sh main`.
 
-Деплой создаёт новую неизменяемую версию по commit SHA, устанавливает production зависимости, переключает `current`, перезапускает службу и проверяет health endpoint. Если проверка не проходит, он возвращает предыдущую версию. Для изменения используй `git push`; для ручного отката передай нужную ветку: `/opt/syncplayer/deploy.sh main` после возврата `main` к предыдущему commit.
+Деплой создаёт релиз по commit SHA, устанавливает production зависимости, переключает `current`, перезапускает службу и проверяет health endpoint. Root-owned переключатель автоматически возвращает предыдущий релиз при ошибке запуска или проверки. Для новых изменений отправь commit в `main` и повтори `deploy.sh main`.
 
 Приложению нужен доступ к TCP 3000 от Nginx Proxy Manager. Разреши этот порт также в Proxmox Firewall для CT 100, если защита включена. Состояние комнат хранится в памяти: перезапуск службы сбрасывает активные комнаты. Загруженные файлы сохраняются в `/var/lib/syncplayer/uploads` и переживают выкладку.
