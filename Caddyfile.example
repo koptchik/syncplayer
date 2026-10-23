@@ -1,0 +1,5 @@
+# Replace watch.example.com with your domain and point its DNS to the server.
+# In .env set PUBLIC_ORIGIN=https://watch.example.com
+watch.example.com {
+    reverse_proxy 127.0.0.1:3000
+}

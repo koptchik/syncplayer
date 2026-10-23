@@ -1,0 +1,7 @@
+node_modules/
+.tools/
+.data/
+package-lock.json
+AGENTS.md
+playwright-report/
+test-results/
