@@ -140,7 +140,7 @@ test('room lifecycle, authorization, media isolation and synchronization', async
     assert.equal(restored.body.members.length, 2);
   });
   let mediaId;
-  await t.test('allows member playback while keeping media management restricted', async () => {
+  await t.test('allows members to add links and control playback', async () => {
     const result = await request(roomPath('/media'), {
       method: 'POST',
       cookie: host,
@@ -156,7 +156,7 @@ test('room lifecycle, authorization, media isolation and synchronization', async
           data: { url: 'https://youtu.be/aqz-KE-bpKQ' },
         })
       ).response.status,
-      403,
+      201,
     );
     assert.equal(
       (
@@ -365,7 +365,7 @@ test('room lifecycle, authorization, media isolation and synchronization', async
     form.append('video', new Blob([Buffer.from('0123456789')], { type: 'video/mp4' }), 'video.mp4');
     const uploaded = await request(roomPath('/upload'), {
       method: 'POST',
-      cookie: host,
+      cookie: guest,
       body: form,
     });
     assert.equal(uploaded.response.status, 201, JSON.stringify(uploaded.body));
@@ -422,9 +422,8 @@ test('room lifecycle, authorization, media isolation and synchronization', async
       const form = new FormData();
       form.append('video', new Blob(['x']), 'denied.mp4');
       assert.equal(
-        (await request(roomPath('/upload'), { method: 'POST', cookie: guest, body: form })).response
-          .status,
-        403,
+        (await request(roomPath('/upload'), { method: 'POST', body: form })).response.status,
+        401,
       );
     },
   );
@@ -521,4 +520,26 @@ test('source parsing rejects provider spoofing, credentials and arbitrary protoc
         .success,
       false,
     );
+});
+
+test('external sources are canonicalized and unsafe URLs rejected', () => {
+  const remote = parseSource({ url: 'https://cdn.example.org/movie.mp4?token=abc#t=5' });
+  assert.equal(remote.type, 'remote');
+  assert.equal(remote.url, 'https://cdn.example.org/movie.mp4?token=abc');
+  assert.equal(parseSource({ url: 'https://cdn.example.org/stream.M3U8' }).format, 'hls');
+  const vimeo = parseSource({ url: 'https://vimeo.com/123456789/abcdef1234' });
+  assert.equal(vimeo.type, 'vimeo');
+  assert.equal(vimeo.url, 'https://player.vimeo.com/video/123456789?h=abcdef1234');
+  for (const url of [
+    'http://cdn.example.org/video.mp4',
+    'https://127.0.0.1/video.mp4',
+    'https://[::1]/video.mp4',
+    'https://localhost/video.mp4',
+    'https://media.local/video.mp4',
+    'https://cdn.example.org:444/video.mp4',
+    'https://user:secret@cdn.example.org/video.mp4',
+    'https://cdn.example.org/page.html',
+    'https://vimeo.com.evil.example/123456789',
+  ])
+    assert.throws(() => parseSource({ url }), url);
 });

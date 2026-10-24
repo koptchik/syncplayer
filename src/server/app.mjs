@@ -66,6 +66,7 @@ export async function createApplication(config) {
             'https://www.youtube.com',
             'https://s.ytimg.com',
             'https://player.twitch.tv',
+            'https://player.vimeo.com',
           ],
           styleSrc: ["'self'", "'unsafe-inline'"],
           imgSrc: ["'self'", 'data:', 'https://i.ytimg.com'],
@@ -73,9 +74,10 @@ export async function createApplication(config) {
             'https://www.youtube.com',
             'https://www.youtube-nocookie.com',
             'https://player.twitch.tv',
+            'https://player.vimeo.com',
           ],
-          connectSrc: ["'self'"],
-          mediaSrc: ["'self'", 'blob:'],
+          connectSrc: ["'self'", 'https:'],
+          mediaSrc: ["'self'", 'blob:', 'https:'],
           objectSrc: ["'none'"],
           baseUri: ["'none'"],
           formAction: ["'self'"],
@@ -210,7 +212,7 @@ export async function createApplication(config) {
     store.broadcast(req.room);
     res.json({ ok: true });
   });
-  app.post('/api/rooms/:id/media', hostOnly, mutationLimiter, (req, res) => {
+  app.post('/api/rooms/:id/media', mutationLimiter, (req, res) => {
     const item = store.add(req.room, parseSource(req.body));
     store.broadcast(req.room);
     res.status(201).json(item);
@@ -264,7 +266,7 @@ export async function createApplication(config) {
       },
     );
   });
-  app.post('/api/rooms/:id/upload', hostOnly, mutationLimiter, async (req, res) => {
+  app.post('/api/rooms/:id/upload', mutationLimiter, async (req, res) => {
     const size = Number(req.headers['content-length']);
     if (!Number.isSafeInteger(size) || size <= 0)
       throw new AppError(411, 'Не указан размер загрузки.');
@@ -350,6 +352,11 @@ export async function createApplication(config) {
     }
   });
   app.use('/api', (_req, res) => res.status(404).json({ error: 'Неизвестный запрос.' }));
+  app.get('/vendor/hls.min.js', (_req, res) =>
+    res.sendFile(
+      fileURLToPath(new URL('../../node_modules/hls.js/dist/hls.min.js', import.meta.url)),
+    ),
+  );
   app.use(express.static(publicDir, { dotfiles: 'deny', index: 'index.html', maxAge: 0 }));
   app.get('/room/:id', (_req, res) => res.sendFile(path.join(publicDir, 'index.html')));
   app.use((_req, res) => res.status(404).type('text').send('Страница не найдена'));

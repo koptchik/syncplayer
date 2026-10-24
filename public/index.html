@@ -2,7 +2,10 @@
 <html lang="ru">
   <head>
     <meta charset="utf-8" />
-    <meta name="viewport" content="width=device-width,initial-scale=1" />
+    <meta
+      name="viewport"
+      content="width=device-width,initial-scale=1,interactive-widget=resizes-content"
+    />
     <meta name="theme-color" content="#111115" />
     <meta
       name="description"
@@ -90,6 +93,10 @@
             <svg><use href="#i-plus" /></svg><span>Создать комнату</span>
           </button>
         </div>
+        <nav class="mobile-tabs" aria-label="Раздел комнаты">
+          <button data-panel="watch" aria-pressed="true">Просмотр и очередь</button
+          ><button data-panel="chat" aria-pressed="false">Чат и участники</button>
+        </nav>
         <div class="workspace">
           <section class="watch-area" aria-label="Совместный просмотр">
             <div class="player" id="playerFrame">
@@ -133,25 +140,27 @@
               </button>
             </div>
             <p class="player-notice" id="playerNotice" role="status" hidden></p>
-            <div class="section-heading">
-              <h2>Очередь просмотра <span class="count" id="queueCount">0</span></h2>
-              <button class="text-button purple" id="addButton">
-                <svg><use href="#i-plus" /></svg>Добавить
-              </button>
-            </div>
-            <div id="queueEmpty" class="queue-empty">
-              <div class="queue-icon">
-                <svg><use href="#i-list" /></svg>
+            <section class="queue-panel" aria-label="Очередь просмотра">
+              <div class="section-heading">
+                <h2>Очередь просмотра <span class="count" id="queueCount">0</span></h2>
+                <button class="text-button purple" id="addButton">
+                  <svg><use href="#i-plus" /></svg>Добавить
+                </button>
               </div>
-              <div>
-                <strong>Что посмотрим сегодня?</strong>
-                <p>Соберите программу вашего вечера</p>
+              <div id="queueEmpty" class="queue-empty">
+                <div class="queue-icon">
+                  <svg><use href="#i-list" /></svg>
+                </div>
+                <div>
+                  <strong>Что посмотрим сегодня?</strong>
+                  <p>Соберите программу вашего вечера</p>
+                </div>
+                <button id="queueAdd" class="small-button">
+                  Добавить видео <svg><use href="#i-arrow" /></svg>
+                </button>
               </div>
-              <button id="queueAdd" class="small-button">
-                Добавить видео <svg><use href="#i-arrow" /></svg>
-              </button>
-            </div>
-            <div id="queueList" class="queue-list" hidden></div>
+              <div id="queueList" class="queue-list" hidden></div>
+            </section>
             <div class="source-grid">
               <button data-source="file">
                 <span class="source-icon local"
@@ -168,6 +177,11 @@
                   ><svg><use href="#i-twitch" /></svg></span
                 ><strong>Twitch</strong><small>Стримы в своей компании</small
                 ><svg class="source-arrow"><use href="#i-arrow" /></svg>
+              </button>
+              <button data-source="link">
+                <span class="source-icon"
+                  ><svg><use href="#i-link" /></svg></span
+                ><strong>По ссылке</strong><small>Vimeo, MP4, HLS</small>
               </button>
             </div>
             <div class="together-tip">
@@ -265,7 +279,8 @@
       <h2>Добавить видео</h2>
       <div class="add-tabs">
         <button data-type="file" class="selected">Файл</button
-        ><button data-type="youtube">YouTube</button><button data-type="twitch">Twitch</button>
+        ><button data-type="youtube">YouTube</button><button data-type="twitch">Twitch</button
+        ><button data-type="link">По ссылке</button>
       </div>
       <form id="mediaForm">
         <div id="fileFields">
@@ -320,7 +335,8 @@
       <ol class="help-list">
         <li><strong>Создайте комнату.</strong> Выберите имя и отправьте друзьям ссылку.</li>
         <li>
-          <strong>Добавьте видео.</strong> Загрузите файл или вставьте ссылку YouTube / Twitch.
+          <strong>Добавьте видео.</strong> Загрузите файл или вставьте ссылку YouTube, Twitch, Vimeo
+          или прямую ссылку на видео. Добавлять могут все участники.
         </li>
         <li>
           <strong>Нажмите Play.</strong> Каждый участник управляет паузой, скоростью и перемоткой.

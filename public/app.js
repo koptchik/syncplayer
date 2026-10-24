@@ -191,10 +191,6 @@ function openAdd(type = 'file') {
     showRoomDialog(Boolean(routeId()));
     return;
   }
-  if (!room.me.isHost) {
-    toast('Видео добавляет ведущий комнаты. Предложите своё в чате.');
-    return;
-  }
   selectedSource = type;
   $$('.add-tabs button').forEach((button) =>
     button.classList.toggle('selected', button.dataset.type === type),
@@ -204,11 +200,17 @@ function openAdd(type = 'file') {
   $('#urlInput').required = type !== 'file';
   $('#fileInput').required = type === 'file';
   $('#urlInput').placeholder =
-    type === 'twitch' ? 'https://www.twitch.tv/channel' : 'https://www.youtube.com/watch?v=…';
-  $('#sourceHint').textContent =
     type === 'twitch'
-      ? 'Канал или запись Twitch. Для прямых эфиров задержка у участников может различаться. Нужен HTTPS-домен.'
-      : 'Подойдут обычные ссылки, Shorts и youtu.be. Некоторые видео запрещены для встраивания автором.';
+      ? 'https://www.twitch.tv/channel'
+      : type === 'link'
+        ? 'https://example.com/video.mp4'
+        : 'https://www.youtube.com/watch?v=…';
+  $('#sourceHint').textContent =
+    type === 'link'
+      ? 'YouTube, Twitch, Vimeo или прямая HTTPS-ссылка MP4, WebM, M4V, MOV, OGV, M3U8. Поток должен быть доступен всем; HLS требует CORS. Страницы других сайтов и DRM не поддерживаются.'
+      : type === 'twitch'
+        ? 'Канал или запись Twitch. Для прямых эфиров задержка у участников может различаться. Нужен HTTPS-домен.'
+        : 'Подойдут обычные ссылки, Shorts и youtu.be. Некоторые видео запрещены для встраивания автором.';
   $('#uploadStatus').textContent = '';
   $('#uploadProgress').hidden = true;
   if (!$('#addDialog').open) $('#addDialog').showModal();
@@ -246,13 +248,21 @@ function renderQueue() {
     button.setAttribute('aria-label', `Смотреть: ${media.title}`);
     const thumb = document.createElement('span');
     thumb.className = `queue-thumb ${media.type}`;
-    thumb.append(icon(media.type === 'file' ? 'folder' : media.type));
+    thumb.append(
+      icon(
+        media.type === 'file'
+          ? 'folder'
+          : ['remote', 'vimeo'].includes(media.type)
+            ? 'link'
+            : media.type,
+      ),
+    );
     const text = document.createElement('span');
     text.className = 'queue-text';
     const title = document.createElement('b');
     title.textContent = media.title;
     const detail = document.createElement('small');
-    detail.textContent = `${active ? 'Сейчас смотрим · ' : ''}${media.type === 'file' ? `${(media.bytes / 1024 ** 2).toFixed(1)} МБ · файл` : media.type === 'youtube' ? 'YouTube' : media.live ? 'Twitch · прямой эфир' : 'Twitch · запись'}`;
+    detail.textContent = `${active ? 'Сейчас смотрим · ' : ''}${media.type === 'file' ? `${(media.bytes / 1024 ** 2).toFixed(1)} МБ · файл` : media.type === 'youtube' ? 'YouTube' : media.type === 'vimeo' ? 'Vimeo' : media.type === 'remote' ? (media.format === 'hls' ? 'HLS · внешний поток' : 'Видео по ссылке') : media.live ? 'Twitch · прямой эфир' : 'Twitch · запись'}`;
     text.append(title, detail);
     button.append(thumb, text);
     button.addEventListener('click', async () => {
@@ -681,3 +691,12 @@ async function initialize() {
   }
 }
 initialize();
+
+for (const button of $$('.mobile-tabs button')) {
+  button.addEventListener('click', () => {
+    const chat = button.dataset.panel === 'chat';
+    $('.workspace').classList.toggle('show-chat', chat);
+    for (const item of $$('.mobile-tabs button'))
+      item.setAttribute('aria-pressed', String(item === button));
+  });
+}

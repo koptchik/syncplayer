@@ -60,11 +60,9 @@ test('two users upload, watch, seek, pause, chat safely, reconnect and delete me
     expect(await host.evaluate(() => Boolean(window.xss))).toBe(false);
     await expect(host.locator('#messages img')).toHaveCount(0);
     await guest.locator('#addButton').click();
-    await expect(guest.locator('#toast')).toContainText('Видео добавляет ведущий');
-    await host.locator('[data-source="file"]').click();
-    await host.locator('#fileInput').setInputFiles(path.resolve('tests/fixtures/sample.webm'));
-    await host.locator('#mediaSubmit').click();
-    await expect(host.locator('#addDialog')).not.toBeVisible();
+    await guest.locator('#fileInput').setInputFiles(path.resolve('tests/fixtures/sample.webm'));
+    await guest.locator('#mediaSubmit').click();
+    await expect(guest.locator('#addDialog')).not.toBeVisible();
     await expect(host.locator('#queueCount')).toHaveText('1');
     await expect(guest.locator('#queueCount')).toHaveText('1');
     await expect
@@ -216,4 +214,113 @@ test('a room disappearing during join switches the form to creation and preserve
     await hostContext.close();
     await guestContext.close();
   }
+});
+
+test('viewport layout keeps chat input accessible and scrolls the queue independently', async ({
+  page,
+}) => {
+  await page.route('https://media.example.org/sample.webm', (route) =>
+    route.fulfill({
+      path: path.resolve('tests/fixtures/sample.webm'),
+      contentType: 'video/webm',
+    }),
+  );
+  await createRoom(page);
+  const roomPath = new URL(page.url()).pathname.replace('/room/', '/api/rooms/');
+  for (let i = 0; i < 12; i++) {
+    const response = await page.request.post(`${roomPath}/media`, {
+      headers: { origin: new URL(page.url()).origin },
+      data: { url: 'https://media.example.org/sample.webm', title: `Видео ${i + 1}` },
+    });
+    expect(response.status()).toBe(201);
+  }
+  await expect(page.locator('#queueCount')).toHaveText('12');
+  await expect
+    .poll(() => page.locator('video').evaluate((v) => v.readyState))
+    .toBeGreaterThanOrEqual(2);
+  for (const size of [
+    { width: 1920, height: 960 },
+    { width: 1366, height: 680 },
+    { width: 390, height: 844 },
+    { width: 844, height: 390 },
+  ]) {
+    await page.setViewportSize(size);
+    await expect(page.locator('#addButton')).toBeInViewport();
+    expect(
+      await page.locator('#queueList').evaluate((el) => el.scrollHeight > el.clientHeight),
+    ).toBe(true);
+    await page.locator('#queueList').evaluate((el) => {
+      el.scrollTop = el.scrollHeight;
+    });
+    if (size.width <= 850) await page.locator('[data-panel="chat"]').click();
+    await expect(page.locator('#chatInput')).toBeInViewport();
+    await expect(page.getByRole('button', { name: 'Отправить сообщение' })).toBeInViewport();
+    await page.locator('#chatInput').fill(`Экран ${size.width}`);
+    await page.locator('#chatForm button').click();
+    await expect(page.locator('#messages')).toContainText(`Экран ${size.width}`);
+    expect(
+      await page.evaluate(
+        () =>
+          document.documentElement.scrollHeight <= innerHeight &&
+          document.documentElement.scrollWidth <= innerWidth,
+      ),
+    ).toBe(true);
+    await page.screenshot({ path: `test-results/viewport-${size.width}.png` });
+    if (size.width <= 850) await page.locator('[data-panel="watch"]').click();
+  }
+});
+
+test('HLS library is served locally and inaccessible streams show an actionable error', async ({
+  page,
+}) => {
+  await page.route('https://media.example.org/unavailable.m3u8', (route) =>
+    route.fulfill({
+      status: 403,
+      headers: { 'access-control-allow-origin': '*' },
+      body: 'Forbidden',
+    }),
+  );
+  await createRoom(page);
+  await page.locator('[data-source="link"]').click();
+  await page.locator('#urlInput').fill('https://media.example.org/unavailable.m3u8');
+  await page.locator('#mediaSubmit').click();
+  await expect(page.locator('#queueCount')).toHaveText('1');
+  await expect(page.locator('#playerNotice')).toContainText('HLS-поток недоступен', {
+    timeout: 20000,
+  });
+  await expect(page.locator('#queueList')).toContainText('HLS');
+});
+
+test('direct HLS video plays and can seek without contacting an external service', async ({
+  page,
+}) => {
+  const errors = [];
+  page.on('pageerror', (error) => errors.push(error.message));
+  await page.route('https://media.example.org/hls/**', (route) => {
+    const file = new URL(route.request().url()).pathname.split('/').pop();
+    return route.fulfill({
+      path: path.resolve('tests/fixtures/hls', file),
+      contentType: file.endsWith('.m3u8') ? 'application/vnd.apple.mpegurl' : 'video/mp2t',
+      headers: { 'access-control-allow-origin': '*' },
+    });
+  });
+  await createRoom(page);
+  await page.locator('[data-source="link"]').click();
+  await page.locator('#urlInput').fill('https://media.example.org/hls/video.m3u8');
+  await page.locator('#mediaSubmit').click();
+  await expect
+    .poll(() => page.locator('video').evaluate((v) => v.readyState))
+    .toBeGreaterThanOrEqual(2);
+  await page.locator('video').evaluate((v) => v.play());
+  await expect
+    .poll(() => page.locator('video').evaluate((v) => v.currentTime))
+    .toBeGreaterThan(0.5);
+  await page.locator('video').evaluate((v) => {
+    v.currentTime = 10;
+  });
+  await expect
+    .poll(() => page.locator('video').evaluate((v) => v.currentTime))
+    .toBeGreaterThanOrEqual(10);
+  await expect(page.locator('#playerNotice')).not.toBeVisible();
+  expect(errors).toEqual([]);
 });

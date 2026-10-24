@@ -5,3 +5,5 @@ package-lock.json
 AGENTS.md
 playwright-report/
 test-results/
+
+tests/fixtures/hls/*.ts

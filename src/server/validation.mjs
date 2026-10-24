@@ -35,9 +35,9 @@ export function parseSource(input) {
     throw new AppError(400, 'Введите корректную ссылку.');
   }
   if (!['http:', 'https:'].includes(u.protocol) || u.username || u.password || u.port) {
-    throw new AppError(400, 'Поддерживаются обычные ссылки YouTube и Twitch.');
+    throw new AppError(400, 'Нужна обычная ссылка без пароля и нестандартного порта.');
   }
-  const host = u.hostname.toLowerCase();
+  const host = u.hostname.toLowerCase().replace(/\.$/, '');
   let providerId;
   if (
     [
@@ -76,5 +76,40 @@ export function parseSource(input) {
         live: true,
       };
   }
-  throw new AppError(400, 'Вставьте ссылку на видео YouTube, канал или запись Twitch.');
+  if (['vimeo.com', 'www.vimeo.com', 'player.vimeo.com'].includes(host)) {
+    const match = u.pathname.match(/^\/(?:video\/)?(\d{1,15})(?:\/([a-f0-9]{6,32}))?\/?$/);
+    const hash = match?.[2] || u.searchParams.get('h');
+    if (match && (!hash || /^[a-f0-9]{6,32}$/.test(hash))) {
+      return {
+        type: 'vimeo',
+        providerId: match[1],
+        url: `https://player.vimeo.com/video/${match[1]}${hash ? `?h=${hash}` : ''}`,
+        title: title || `Vimeo · ${match[1]}`,
+        live: false,
+      };
+    }
+  }
+  // The server never fetches external media. Only HTTPS video resources are accepted.
+  const extension = u.pathname.match(/\.(mp4|webm|m4v|mov|ogv|m3u8)$/i)?.[1].toLowerCase();
+  if (
+    u.protocol === 'https:' &&
+    extension &&
+    host.includes('.') &&
+    !/^[\d.]+$/.test(host) &&
+    !host.includes(':') &&
+    !/(^|\.)(localhost|local|internal|test|invalid)$/.test(host)
+  ) {
+    u.hash = '';
+    return {
+      type: 'remote',
+      url: u.href,
+      format: extension === 'm3u8' ? 'hls' : 'video',
+      title: title || u.pathname.split('/').pop().slice(0, 120),
+      live: false,
+    };
+  }
+  throw new AppError(
+    400,
+    'Поддерживаются YouTube, Twitch, Vimeo и прямые HTTPS-ссылки MP4, WebM, M4V, MOV, OGV или M3U8. Для другой страницы нужна прямая ссылка на видео; защищённые видео недоступны.',
+  );
 }

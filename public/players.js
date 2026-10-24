@@ -81,12 +81,20 @@ export class PlayerController {
     this.notice('Подключаем видео…');
     const current = () => generation === this.generation;
     try {
-      if (media.type === 'file') {
+      if (media.type === 'file' || media.type === 'remote') {
+        let Hls;
+        let hls;
+        if (media.format === 'hls') {
+          await loadScript('/vendor/hls.min.js', () => Boolean(window.Hls));
+          if (!current()) return;
+          Hls = window.Hls;
+        }
         const video = document.createElement('video');
         video.controls = true;
         video.playsInline = true;
         video.preload = 'metadata';
-        video.src = `/api/rooms/${roomId}/media/${media.id}`;
+        const source =
+          media.type === 'remote' ? media.url : `/api/rooms/${roomId}/media/${media.id}`;
         video.setAttribute('aria-label', media.title);
         this.mount.append(video);
         this.adapter = {
@@ -105,6 +113,7 @@ export class PlayerController {
           play: () => video.play(),
           pause: () => video.pause(),
           destroy: () => {
+            hls?.destroy();
             video.pause();
             video.removeAttribute('src');
             video.load();
@@ -121,7 +130,7 @@ export class PlayerController {
         video.addEventListener('error', () => {
           if (current())
             this.notice(
-              'Браузер не смог прочитать видео. Попробуйте MP4 с видео H.264 и звуком AAC или WebM.',
+              'Видео недоступно или кодек не поддерживается. Для внешних ссылок проверьте доступ и разрешение сайта на просмотр; для файлов используйте MP4 H.264/AAC или WebM.',
             );
         });
         await new Promise((resolve, reject) => {
@@ -154,6 +163,24 @@ export class PlayerController {
             },
             { once: true },
           );
+          if (Hls?.isSupported()) {
+            hls = new Hls({ enableWorker: false });
+            hls.on(Hls.Events.ERROR, (_event, data) => {
+              if (!data.fatal) return;
+              clearTimeout(timeout);
+              const error = new Error(
+                'HLS-поток недоступен. Нужен публичный HTTPS-поток с разрешённым CORS, без DRM и авторизации.',
+              );
+              if (current()) this.notice(error.message);
+              reject(error);
+              hls.destroy();
+            });
+            hls.attachMedia(video);
+            hls.loadSource(source);
+          } else if (Hls && !video.canPlayType('application/vnd.apple.mpegurl')) {
+            clearTimeout(timeout);
+            reject(new Error('Этот браузер не поддерживает HLS.'));
+          } else video.src = source;
         });
       } else if (media.type === 'youtube') {
         await loadScript('https://www.youtube.com/iframe_api', () => Boolean(window.YT?.Player));
@@ -211,6 +238,58 @@ export class PlayerController {
             pause: () => player.pauseVideo(),
             destroy: () => player.destroy(),
           };
+        });
+      } else if (media.type === 'vimeo') {
+        await loadScript('https://player.vimeo.com/api/player.js', () =>
+          Boolean(window.Vimeo?.Player),
+        );
+        if (!current()) return;
+        const iframe = document.createElement('iframe');
+        iframe.src = media.url;
+        iframe.title = media.title;
+        iframe.allow = 'autoplay; fullscreen; picture-in-picture';
+        iframe.allowFullscreen = true;
+        this.mount.append(iframe);
+        const player = new window.Vimeo.Player(iframe);
+        const state = { position: 0, playing: false, rate: 1, duration: 0 };
+        const report = (error) => {
+          if (current()) this.notice(`Vimeo: ${error.message}`);
+        };
+        this.adapter = {
+          state: () => ({ ...state }),
+          seek: (n) => player.setCurrentTime(n).catch(report),
+          rate: (n) => player.setPlaybackRate(n).catch(report),
+          play: () => player.play(),
+          pause: () => player.pause().catch(report),
+          destroy: () => {
+            player.destroy().catch(() => {});
+          },
+        };
+        player.on('timeupdate', ({ seconds, duration }) =>
+          Object.assign(state, { position: seconds, duration }),
+        );
+        for (const event of ['play', 'pause', 'seeked', 'playbackratechange']) {
+          player.on(event, (data) => {
+            if (!current()) return;
+            if (event === 'play' || event === 'pause') state.playing = event === 'play';
+            if (typeof data.seconds === 'number') state.position = data.seconds;
+            if (typeof data.playbackRate === 'number') state.rate = data.playbackRate;
+            this.event(event === 'playbackratechange' ? 'ratechange' : event);
+          });
+        }
+        player.on('ended', () => {
+          if (current() && this.ready) this.ended();
+        });
+        player.on('error', report);
+        await new Promise((resolve, reject) => {
+          const timer = setTimeout(
+            () => reject(new Error('Vimeo не ответил или встраивание запрещено.')),
+            20000,
+          );
+          player
+            .ready()
+            .then(resolve, reject)
+            .finally(() => clearTimeout(timer));
         });
       } else {
         if (

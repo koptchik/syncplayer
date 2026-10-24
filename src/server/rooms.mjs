@@ -54,8 +54,7 @@ export class RoomStore {
     return member;
   }
   host(room, member) {
-    if (member.id !== room.hostId)
-      throw new AppError(403, 'Добавлять и удалять видео может только ведущий.');
+    if (member.id !== room.hostId) throw new AppError(403, 'Удалять видео может только ведущий.');
   }
   position(room) {
     return (
