@@ -1,4 +1,5 @@
 import { z } from 'zod';
+import { parseFragment } from 'parse5';
 
 const name = z.string().trim().min(1).max(40);
 export const createSchema = z.object({ name, title: z.string().trim().min(1).max(80) }).strict();
@@ -15,7 +16,7 @@ export const controlSchema = z
   })
   .strict();
 export const sourceSchema = z
-  .object({ url: z.string().max(2048), title: z.string().trim().max(120).optional() })
+  .object({ url: z.string().max(8192), title: z.string().trim().max(120).optional() })
   .strict();
 export const idSchema = z.string().regex(/^[a-f0-9]{32}$/);
 
@@ -27,7 +28,22 @@ export class AppError extends Error {
 }
 
 export function parseSource(input) {
-  const { url, title } = sourceSchema.parse(input);
+  const { url: inputUrl, title } = sourceSchema.parse(input);
+  let url = inputUrl.trim();
+  if (url.startsWith('<')) {
+    const fragment = parseFragment(url);
+    const frames = [];
+    const walk = (node) => {
+      if (node.tagName === 'iframe') frames.push(node);
+      for (const child of node.childNodes || []) walk(child);
+    };
+    walk(fragment);
+    if (frames.length !== 1 || frames[0].attrs.some((a) => a.name === 'srcdoc'))
+      throw new AppError(400, 'Вставьте код одного iframe с адресом src, без srcdoc.');
+    url = frames[0].attrs.find((a) => a.name === 'src')?.value?.trim() || '';
+  }
+  if (url.startsWith('//')) url = `https:${url}`;
+  if (url.length > 2048) throw new AppError(400, 'Адрес плеера слишком длинный.');
   let u;
   try {
     u = new URL(url);
@@ -38,6 +54,22 @@ export function parseSource(input) {
     throw new AppError(400, 'Нужна обычная ссылка без пароля и нестандартного порта.');
   }
   const host = u.hostname.toLowerCase().replace(/\.$/, '');
+  if (host === 'kodikplayer.com') {
+    if (
+      u.protocol !== 'https:' ||
+      !/^\/(seria|video)\/\d{1,15}\/[a-f0-9]{32}\/(?:360|480|720|1080)p\/?$/.test(u.pathname)
+    )
+      throw new AppError(
+        400,
+        'Для Kodik нужен HTTPS-код конкретной серии или фильма (seria/video). Выберите серию и озвучку на сайте и скопируйте код плеера.',
+      );
+    return {
+      type: 'kodik',
+      url: `https://kodikplayer.com${u.pathname}`,
+      title: title || `Kodik · ${u.pathname.split('/')[2]}`,
+      live: false,
+    };
+  }
   let providerId;
   if (
     [
@@ -46,6 +78,7 @@ export function parseSource(input) {
       'm.youtube.com',
       'youtu.be',
       'www.youtube-nocookie.com',
+      'youtube-nocookie.com',
     ].includes(host)
   ) {
     providerId =
@@ -57,6 +90,25 @@ export function parseSource(input) {
     if (!/^[a-zA-Z0-9_-]{11}$/.test(providerId || ''))
       throw new AppError(400, 'Не удалось найти ID видео YouTube.');
     return { type: 'youtube', providerId, title: title || `YouTube · ${providerId}`, live: false };
+  }
+  if (host === 'player.twitch.tv') {
+    const channel = u.searchParams.get('channel');
+    const video = u.searchParams.get('video')?.replace(/^v/, '');
+    if (channel && !video && /^[a-zA-Z0-9_]{1,25}$/.test(channel))
+      return {
+        type: 'twitch',
+        providerId: channel,
+        title: title || `Twitch · ${channel}`,
+        live: true,
+      };
+    if (video && !channel && /^\d{1,20}$/.test(video))
+      return {
+        type: 'twitch',
+        providerId: video,
+        title: title || `Twitch · запись ${video}`,
+        live: false,
+      };
+    throw new AppError(400, 'В iframe Twitch нужен один канал или запись.');
   }
   if (['twitch.tv', 'www.twitch.tv', 'm.twitch.tv'].includes(host)) {
     const vod = u.pathname.match(/^\/videos\/(\d{1,20})\/?$/);
@@ -110,6 +162,6 @@ export function parseSource(input) {
   }
   throw new AppError(
     400,
-    'Поддерживаются YouTube, Twitch, Vimeo и прямые HTTPS-ссылки MP4, WebM, M4V, MOV, OGV или M3U8. Для другой страницы нужна прямая ссылка на видео; защищённые видео недоступны.',
+    'Поддерживаются YouTube, Twitch, Vimeo, Kodik (kodikplayer.com), их iframe-коды и прямые HTTPS-видеоссылки. Для другого сайта нужен поддерживаемый код плеера; произвольные страницы пока не разбираются.',
   );
 }

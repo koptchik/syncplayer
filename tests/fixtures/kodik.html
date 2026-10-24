@@ -1,0 +1,47 @@
+<!doctype html>
+<meta charset="utf-8" />
+<button id="play">Play</button><button id="pause">Pause</button><button id="seek">Seek</button>
+<script>
+  // A deterministic simulator of the publicly observed Kodik message protocol.
+  let time = 0,
+    playing = false,
+    rate = 1,
+    at = performance.now();
+  const emit = (key, value) => parent.postMessage({ key: `kodik_player_${key}`, value }, '*');
+  const advance = () => {
+    if (playing) time += ((performance.now() - at) / 1000) * rate;
+    at = performance.now();
+  };
+  const command = (method, value = {}) => {
+    advance();
+    if (method === 'play') {
+      playing = true;
+      emit('video_started');
+      emit('play');
+    }
+    if (method === 'pause') {
+      playing = false;
+      emit('pause');
+    }
+    if (method === 'seek') {
+      time = value.seconds;
+      emit('seek', time);
+    }
+    if (method === 'speed') {
+      rate = value.speed;
+      emit('speed_change', rate);
+    }
+    if (method === 'get_time') emit('time', time);
+  };
+  addEventListener('message', ({ data }) => {
+    if (data?.key === 'kodik_player_api') command(data.value.method, data.value);
+  });
+  document.querySelector('#play').onclick = () => command('play');
+  document.querySelector('#pause').onclick = () => command('pause');
+  document.querySelector('#seek').onclick = () => command('seek', { seconds: 40 });
+  window.snapshot = () => {
+    advance();
+    return { time, playing, rate };
+  };
+  emit('duration_update', 300);
+</script>

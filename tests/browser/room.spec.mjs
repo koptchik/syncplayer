@@ -324,3 +324,59 @@ test('direct HLS video plays and can seek without contacting an external service
   await expect(page.locator('#playerNotice')).not.toBeVisible();
   expect(errors).toEqual([]);
 });
+
+test('Kodik iframe imports safely and synchronizes play, pause and seek across members', async ({
+  browser,
+}) => {
+  const hostContext = await browser.newContext();
+  const guestContext = await browser.newContext();
+  for (const context of [hostContext, guestContext]) {
+    await context.route('https://kodikplayer.com/**', (route) =>
+      route.fulfill({ path: path.resolve('tests/fixtures/kodik.html'), contentType: 'text/html' }),
+    );
+  }
+  try {
+    const host = await hostContext.newPage();
+    const guest = await guestContext.newPage();
+    await createRoom(host);
+    await joinRoom(guest, host.url());
+    await guest.locator('[data-source="link"]').click();
+    await guest
+      .locator('#urlInput')
+      .fill(
+        '<iframe src="https://kodikplayer.com/seria/1674048/a14f588b93b4bdf705efa9e6f1e81d14/720p" onload="window.xss=true" width="607" height="360"></iframe><script>window.xss=true</script>',
+      );
+    await guest.locator('#mediaSubmit').click();
+    await expect(host.locator('#queueList')).toContainText('Kodik');
+    await expect(host.frameLocator('#mediaMount iframe').locator('#play')).toBeVisible();
+    await expect(guest.frameLocator('#mediaMount iframe').locator('#play')).toBeVisible();
+    const frame = (page) =>
+      page.frames().find((f) => f.url().startsWith('https://kodikplayer.com/'));
+    expect(await host.evaluate(() => Boolean(window.xss))).toBe(false);
+    expect(await guest.evaluate(() => Boolean(window.xss))).toBe(false);
+    await guest.frameLocator('#mediaMount iframe').locator('#play').click();
+    await expect.poll(() => frame(host).evaluate(() => window.snapshot().playing)).toBe(true);
+    await guest.frameLocator('#mediaMount iframe').locator('#seek').click();
+    await expect
+      .poll(() => frame(host).evaluate(() => window.snapshot().time))
+      .toBeGreaterThanOrEqual(39);
+    await host.frameLocator('#mediaMount iframe').locator('#pause').click();
+    await expect.poll(() => frame(guest).evaluate(() => window.snapshot().playing)).toBe(false);
+    // An unrelated window cannot impersonate the embedded player.
+    await host.evaluate(() =>
+      window.dispatchEvent(
+        new MessageEvent('message', {
+          origin: 'https://kodikplayer.com',
+          source: window,
+          data: { key: 'kodik_player_play' },
+        }),
+      ),
+    );
+    await host.waitForTimeout(3300);
+    expect(await frame(guest).evaluate(() => window.snapshot().playing)).toBe(false);
+    expect(await frame(host).evaluate(() => window.snapshot().playing)).toBe(false);
+  } finally {
+    await hostContext.close();
+    await guestContext.close();
+  }
+});

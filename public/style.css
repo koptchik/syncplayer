@@ -1819,3 +1819,22 @@ dialog {
     padding: 6px;
   }
 }
+
+#urlInput {
+  display: block;
+  width: 100%;
+  resize: vertical;
+  min-height: 90px;
+  max-height: 220px;
+  padding: 11px 12px;
+  border: 1px solid #50365f;
+  border-radius: 7px;
+  background: #251d2c;
+  color: var(--text);
+  font: inherit;
+  overflow-wrap: anywhere;
+}
+#urlInput:focus {
+  outline: 2px solid var(--purple);
+  outline-offset: 2px;
+}

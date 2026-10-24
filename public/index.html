@@ -280,7 +280,7 @@
       <div class="add-tabs">
         <button data-type="file" class="selected">Файл</button
         ><button data-type="youtube">YouTube</button><button data-type="twitch">Twitch</button
-        ><button data-type="link">По ссылке</button>
+        ><button data-type="link">Ссылка / код плеера</button>
       </div>
       <form id="mediaForm">
         <div id="fileFields">
@@ -301,10 +301,12 @@
         </div>
         <div id="urlFields" hidden>
           <label
-            >Ссылка на видео или стрим<input
+            >Ссылка или код iframe<textarea
               id="urlInput"
-              type="url"
-              placeholder="https://www.youtube.com/watch?v=…" /></label
+              rows="3"
+              maxlength="8192"
+              placeholder="https://www.youtube.com/watch?v=…"
+            ></textarea></label
           ><label
             >Название <span class="optional">необязательно</span
             ><input

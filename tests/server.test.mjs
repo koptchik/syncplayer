@@ -543,3 +543,40 @@ test('external sources are canonicalized and unsafe URLs rejected', () => {
   ])
     assert.throws(() => parseSource({ url }), url);
 });
+
+test('iframe code imports only a validated player URL without active HTML', () => {
+  const url = 'https://kodikplayer.com/seria/1674048/a14f588b93b4bdf705efa9e6f1e81d14/720p';
+  const item = parseSource({
+    url: `<iframe src="${url}?autoplay=true" onload="alert(1)" allow="camera"></iframe><script>alert(2)</script>`,
+  });
+  assert.equal(item.type, 'kodik');
+  assert.equal(item.url, url);
+  assert.equal(JSON.stringify(item).includes('alert'), false);
+  assert.equal(
+    parseSource({ url: '<iframe src="//www.youtube.com/embed/aqz-KE-bpKQ"></iframe>' }).type,
+    'youtube',
+  );
+  assert.equal(
+    parseSource({
+      url: '<iframe src="https://player.vimeo.com/video/123456789?h=abcdef1234&amp;autoplay=1"></iframe>',
+    }).url,
+    'https://player.vimeo.com/video/123456789?h=abcdef1234',
+  );
+  assert.equal(
+    parseSource({
+      url: '<iframe src="https://player.twitch.tv/?channel=twitch&amp;parent=example.org"></iframe>',
+    }).providerId,
+    'twitch',
+  );
+  for (const code of [
+    '<iframe src="javascript:alert(1)"></iframe>',
+    `<iframe src="${url}" srcdoc="<script>alert(1)</script>"></iframe>`,
+    `<iframe src="${url}"></iframe><iframe src="${url}"></iframe>`,
+    '<iframe></iframe>',
+    '<script>location="https://kodikplayer.com"</script>',
+    url.replace('kodikplayer.com', 'kodikplayer.com.evil.org'),
+    url.replace('https:', 'http:'),
+    url.replace('/seria/', '/serial/'),
+  ])
+    assert.throws(() => parseSource({ url: code }), code);
+});

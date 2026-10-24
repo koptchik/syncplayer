@@ -71,6 +71,7 @@ export async function createApplication(config) {
           styleSrc: ["'self'", "'unsafe-inline'"],
           imgSrc: ["'self'", 'data:', 'https://i.ytimg.com'],
           frameSrc: [
+            'https://kodikplayer.com',
             'https://www.youtube.com',
             'https://www.youtube-nocookie.com',
             'https://player.twitch.tv',

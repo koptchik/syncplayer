@@ -203,11 +203,11 @@ function openAdd(type = 'file') {
     type === 'twitch'
       ? 'https://www.twitch.tv/channel'
       : type === 'link'
-        ? 'https://example.com/video.mp4'
+        ? '<iframe src="https://kodikplayer.com/seria/…"></iframe>'
         : 'https://www.youtube.com/watch?v=…';
   $('#sourceHint').textContent =
     type === 'link'
-      ? 'YouTube, Twitch, Vimeo или прямая HTTPS-ссылка MP4, WebM, M4V, MOV, OGV, M3U8. Поток должен быть доступен всем; HLS требует CORS. Страницы других сайтов и DRM не поддерживаются.'
+      ? 'Вставьте ссылку или код iframe: Kodik, YouTube, Vimeo, Twitch либо прямая видеоссылка. Для Kodik скопируйте код выбранной серии и озвучки. Автоматический поиск плееров на страницах сайтов пока недоступен.'
       : type === 'twitch'
         ? 'Канал или запись Twitch. Для прямых эфиров задержка у участников может различаться. Нужен HTTPS-домен.'
         : 'Подойдут обычные ссылки, Shorts и youtu.be. Некоторые видео запрещены для встраивания автором.';
@@ -252,7 +252,7 @@ function renderQueue() {
       icon(
         media.type === 'file'
           ? 'folder'
-          : ['remote', 'vimeo'].includes(media.type)
+          : ['remote', 'vimeo', 'kodik'].includes(media.type)
             ? 'link'
             : media.type,
       ),
@@ -262,7 +262,7 @@ function renderQueue() {
     const title = document.createElement('b');
     title.textContent = media.title;
     const detail = document.createElement('small');
-    detail.textContent = `${active ? 'Сейчас смотрим · ' : ''}${media.type === 'file' ? `${(media.bytes / 1024 ** 2).toFixed(1)} МБ · файл` : media.type === 'youtube' ? 'YouTube' : media.type === 'vimeo' ? 'Vimeo' : media.type === 'remote' ? (media.format === 'hls' ? 'HLS · внешний поток' : 'Видео по ссылке') : media.live ? 'Twitch · прямой эфир' : 'Twitch · запись'}`;
+    detail.textContent = `${active ? 'Сейчас смотрим · ' : ''}${media.type === 'file' ? `${(media.bytes / 1024 ** 2).toFixed(1)} МБ · файл` : media.type === 'youtube' ? 'YouTube' : media.type === 'kodik' ? 'Kodik' : media.type === 'vimeo' ? 'Vimeo' : media.type === 'remote' ? (media.format === 'hls' ? 'HLS · внешний поток' : 'Видео по ссылке') : media.live ? 'Twitch · прямой эфир' : 'Twitch · запись'}`;
     text.append(title, detail);
     button.append(thumb, text);
     button.addEventListener('click', async () => {

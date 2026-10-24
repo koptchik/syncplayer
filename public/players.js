@@ -1,3 +1,5 @@
+import { createKodikAdapter } from './kodik.js';
+
 const scripts = new Map();
 function loadScript(url, ready) {
   if (ready()) return Promise.resolve();
@@ -81,7 +83,20 @@ export class PlayerController {
     this.notice('Подключаем видео…');
     const current = () => generation === this.generation;
     try {
-      if (media.type === 'file' || media.type === 'remote') {
+      if (media.type === 'kodik') {
+        this.adapter = createKodikAdapter(this.mount, media, {
+          changed: (kind) => {
+            if (current()) this.event(kind);
+          },
+          ended: () => {
+            if (current() && this.ready) this.ended();
+          },
+          blocked: (value) => {
+            if (current()) this.blocked(value);
+          },
+        });
+        await this.adapter.loaded;
+      } else if (media.type === 'file' || media.type === 'remote') {
         let Hls;
         let hls;
         if (media.format === 'hls') {
