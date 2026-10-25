@@ -20,6 +20,9 @@ let controlTimer;
 let controlSending = false;
 let pendingControl = null;
 let queueSignature = '';
+let pageOptions = [];
+let resolvedPageUrl = '';
+let leaving = false;
 const seenMessages = new Set();
 function storedName() {
   try {
@@ -139,6 +142,7 @@ function showRoomDialog(join = false) {
       : 'Пригласите друзей и смотрите вместе.';
   $('#roomSubmit').textContent = join ? 'Войти в комнату' : 'Создать комнату ↗';
   $('#titleLabel').hidden = join;
+  $('#permanentLabel').hidden = join;
   $('#titleInput').required = !join;
   $('#nameInput').value = storedName();
   $('#roomError').textContent = '';
@@ -158,6 +162,8 @@ function recoverMissingRoom() {
     socket = null;
   }
   room = null;
+  $('#leaveButton').hidden = true;
+  $('#permanentButton').hidden = true;
   mediaGeneration++;
   player.load(null);
   $('#playerEmpty').hidden = false;
@@ -192,6 +198,9 @@ function openAdd(type = 'file') {
     return;
   }
   selectedSource = type;
+  pageOptions = [];
+  resolvedPageUrl = '';
+  $('#pageChoices').hidden = true;
   $$('.add-tabs button').forEach((button) =>
     button.classList.toggle('selected', button.dataset.type === type),
   );
@@ -207,7 +216,7 @@ function openAdd(type = 'file') {
         : 'https://www.youtube.com/watch?v=…';
   $('#sourceHint').textContent =
     type === 'link'
-      ? 'Вставьте ссылку или код iframe: Kodik, YouTube, Vimeo, Twitch либо прямая видеоссылка. Для Kodik скопируйте код выбранной серии и озвучки. Автоматический поиск плееров на страницах сайтов пока недоступен.'
+      ? 'Вставьте ссылку или код iframe: Kodik, YouTube, Vimeo, Twitch либо прямая видеоссылка. Для Kodik скопируйте код выбранной серии и озвучки. Для old.yummyani.me/catalog/item/… нажмите «Найти плееры» и выберите озвучку и серию.'
       : type === 'twitch'
         ? 'Канал или запись Twitch. Для прямых эфиров задержка у участников может различаться. Нужен HTTPS-домен.'
         : 'Подойдут обычные ссылки, Shorts и youtu.be. Некоторые видео запрещены для встраивания автором.';
@@ -358,7 +367,17 @@ async function receive(nextRoom) {
   $('#profileButton').textContent = room.me.name.slice(0, 2).toUpperCase();
   $('#inviteButton span').textContent = 'Пригласить друзей';
   $('#inviteButton use').setAttribute('href', '#i-users');
-  $('#roomBadge').textContent = 'КОМНАТА ОТКРЫТА';
+  $('#roomBadge').textContent = room.permanent ? 'ПОСТОЯННАЯ КОМНАТА' : 'КОМНАТА ОТКРЫТА';
+  $('#leaveButton').hidden = false;
+  $('#returnRoomButton').hidden = true;
+  if (room.permanent) {
+    try {
+      localStorage.setItem('syncplayerPermanentRoom', room.id);
+    } catch {
+      /* Private browsing can disable storage. */
+    }
+  }
+  $('#permanentButton').hidden = !room.me.isHost || room.permanent;
   $('#syncStatus').textContent = 'Управляют все участники';
   const media = room.queue.find((item) => item.id === room.playback.mediaId);
   $('#playStatus').textContent = media ? media.title : 'Готовы к просмотру';
@@ -409,6 +428,7 @@ function connect() {
     if (message.type === 'state') receive(message.room).catch((error) => notice(error.message));
   };
   ws.onclose = (event) => {
+    if (leaving) return;
     connected = false;
     pendingControl = null;
     clearTimeout(controlTimer);
@@ -445,7 +465,11 @@ $('#roomForm').addEventListener('submit', async (event) => {
   try {
     const nextRoom = joining
       ? await api(`/api/rooms/${routeId()}/join`, { name })
-      : await api('/api/rooms', { name, title: $('#titleInput').value.trim() });
+      : await api('/api/rooms', {
+          name,
+          title: $('#titleInput').value.trim(),
+          permanent: $('#permanentInput').checked,
+        });
     if (socket) {
       socket.onclose = null;
       socket.onmessage = null;
@@ -566,11 +590,23 @@ $('#mediaForm').addEventListener('submit', async (event) => {
         xhr.ontimeout = () => reject(new Error('Время загрузки истекло.'));
         xhr.send(body);
       });
-    } else
+    } else {
+      const input = $('#urlInput').value.trim();
+      if (input.startsWith('https://old.yummyani.me/catalog/item/') && resolvedPageUrl !== input) {
+        await findPagePlayers();
+        return;
+      }
+      const choice =
+        resolvedPageUrl === input
+          ? pageOptions.find((item) => String(item.id) === $('#pageEpisode').value)
+          : null;
+      if (resolvedPageUrl === input && !choice?.supported)
+        throw new Error('Выберите поддерживаемый плеер, озвучку и серию.');
       await roomApi('/media', {
-        url: $('#urlInput').value.trim(),
-        title: $('#mediaTitleInput').value.trim(),
+        url: choice?.url || input,
+        title: $('#mediaTitleInput').value.trim() || choice?.title || '',
       });
+    }
     upload = null;
     $('#addDialog').close();
     $('#mediaForm').reset();
@@ -699,4 +735,128 @@ for (const button of $$('.mobile-tabs button')) {
     for (const item of $$('.mobile-tabs button'))
       item.setAttribute('aria-pressed', String(item === button));
   });
+}
+
+$('#permanentButton').addEventListener('click', async () => {
+  try {
+    await receive(await roomApi('/permanent', {}));
+    toast('Комната закреплена. Ссылка сохранится после перезапуска.');
+  } catch (error) {
+    toast(error.message);
+  }
+});
+$('#leaveButton').addEventListener('click', async () => {
+  leaving = true;
+  $('#leaveButton').disabled = true;
+  try {
+    await roomApi('/leave', {});
+    if (upload) upload.abort();
+    clearTimeout(reconnectTimer);
+    clearTimeout(controlTimer);
+    if (socket) {
+      socket.onclose = null;
+      socket.onmessage = null;
+      socket.close();
+      socket = null;
+    }
+    connected = false;
+    pendingControl = null;
+    mediaGeneration++;
+    await player.load(null);
+    location.replace('/');
+  } catch (error) {
+    leaving = false;
+    $('#leaveButton').disabled = false;
+    toast(error.message);
+    if (room) connect();
+  }
+});
+function fillOptions(select, values) {
+  select.replaceChildren();
+  for (const [value, label, disabled] of values) {
+    const option = document.createElement('option');
+    option.value = value;
+    option.textContent = label;
+    option.disabled = Boolean(disabled);
+    select.append(option);
+  }
+  select.value = [...select.options].find((o) => !o.disabled)?.value || '';
+}
+function selectEpisodes() {
+  const items = pageOptions.filter(
+    (item) =>
+      item.supported &&
+      item.player === $('#pagePlayer').value &&
+      item.dubbing === $('#pageDubbing').value,
+  );
+  fillOptions(
+    $('#pageEpisode'),
+    items.map((item) => [String(item.id), `Серия ${item.episode}`]),
+  );
+}
+function selectDubbing() {
+  const names = [
+    ...new Set(
+      pageOptions
+        .filter((item) => item.supported && item.player === $('#pagePlayer').value)
+        .map((item) => item.dubbing),
+    ),
+  ];
+  fillOptions(
+    $('#pageDubbing'),
+    names.map((name) => [name, name]),
+  );
+  selectEpisodes();
+}
+async function findPagePlayers() {
+  const input = $('#urlInput').value.trim();
+  $('#findPlayers').disabled = true;
+  $('#uploadStatus').textContent = 'Ищем серии и озвучки…';
+  pageOptions = [];
+  resolvedPageUrl = '';
+  $('#pageChoices').hidden = true;
+  try {
+    const result = await roomApi('/resolve', { url: input });
+    if ($('#urlInput').value.trim() !== input) return;
+    pageOptions = result.options;
+    resolvedPageUrl = input;
+    const names = [...new Set(pageOptions.map((item) => item.player))];
+    fillOptions(
+      $('#pagePlayer'),
+      names.map((name) => {
+        const supported = pageOptions.some((item) => item.player === name && item.supported);
+        return [name, name + (supported ? '' : ' — пока не поддерживается'), !supported];
+      }),
+    );
+    selectDubbing();
+    $('#pageChoicesHint').textContent = `${result.title}. Выберите плеер, озвучку и серию.`;
+    $('#pageChoices').hidden = false;
+    $('#uploadStatus').textContent = pageOptions.some((item) => item.supported)
+      ? ''
+      : 'Поддерживаемые плееры не найдены. Попробуйте код iframe вручную.';
+  } finally {
+    $('#findPlayers').disabled = false;
+  }
+}
+$('#findPlayers').addEventListener('click', () =>
+  findPagePlayers().catch((error) => {
+    $('#uploadStatus').textContent = error.message;
+  }),
+);
+$('#pagePlayer').addEventListener('change', selectDubbing);
+$('#pageDubbing').addEventListener('change', selectEpisodes);
+$('#urlInput').addEventListener('input', () => {
+  pageOptions = [];
+  resolvedPageUrl = '';
+  $('#pageChoices').hidden = true;
+});
+
+try {
+  const savedRoom = localStorage.getItem('syncplayerPermanentRoom');
+  if (!routeId() && /^[a-f0-9]{32}$/.test(savedRoom || '')) {
+    $('#returnRoomButton').hidden = false;
+    $('#returnRoomButton').addEventListener('click', () => location.assign(`/room/${savedRoom}`));
+  }
+} catch {
+  /* The room remains accessible through its invitation URL. */
 }

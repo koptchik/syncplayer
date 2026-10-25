@@ -19,7 +19,7 @@ export default defineConfig({
     env: {
       HOST: '127.0.0.1',
       PORT: '3100',
-      DATA_DIR: '.data/e2e',
+      DATA_DIR: `.data/e2e-${Date.now()}-${process.pid}`,
       PUBLIC_ORIGIN: 'https://stream.koptchik.duckdns.org',
     },
   },

@@ -6,4 +6,4 @@ The setup installs the checksum-verified Node.js 24.22.1 binary, creates the res
 
 As `deploy`, run `/opt/syncplayer/deploy.sh main`. Each successful deployment checks out a commit into its own release directory, installs production dependencies, atomically activates the release, restarts systemd, and checks `/api/health`. The privileged switch automatically restores the previous release if start or health verification fails. Releases are retained for manual rollback.
 
-The persistent media path is `/var/lib/syncplayer`. The setup creates the initial env file only when one does not exist; edit it as root to change settings. Deployments restart the process, so in-memory rooms reset.
+The persistent media path is `/var/lib/syncplayer`. The setup creates the initial env file only when one does not exist; edit it as root to change settings. Deployments restart the process: temporary rooms reset, while the permanent room is restored from `/var/lib/syncplayer/permanent-room.json` with playback paused. Back up this file and uploads together. Rolling back to a release older than permanent-room support will not restore the room and may expire its uploads.

@@ -1,6 +1,8 @@
 import { randomBytes, createHash } from 'node:crypto';
 import { performance } from 'node:perf_hooks';
 import { AppError } from './validation.mjs';
+import { readFileSync, writeFileSync, renameSync } from 'node:fs';
+import path from 'node:path';
 
 export const randomId = () => randomBytes(16).toString('hex');
 const digest = (token) => createHash('sha256').update(token).digest('hex');
@@ -10,7 +12,79 @@ export class RoomStore {
     this.config = config;
     this.rooms = new Map();
   }
-  create({ name, title }) {
+  loadPermanent() {
+    let saved;
+    try {
+      saved = JSON.parse(
+        readFileSync(path.join(this.config.dataDir, 'permanent-room.json'), 'utf8'),
+      );
+    } catch (error) {
+      if (error.code === 'ENOENT') return;
+      throw error;
+    }
+    if (saved.version !== 1 || !/^[a-f0-9]{32}$/.test(saved.room?.id))
+      throw new Error('Invalid permanent room file');
+    const room = saved.room;
+    room.permanent = true;
+    room.expiresAt = Number.MAX_SAFE_INTEGER;
+    room.members = new Map(
+      room.members.map(([hash, member]) => [hash, { ...member, connections: 0 }]),
+    );
+    room.sockets = new Set();
+    room.clock = performance.now();
+    room.playback.playing = false;
+    room.uploading = false;
+    this.rooms.set(room.id, room);
+  }
+  persist(room) {
+    if (!room.permanent) return;
+    const data = { ...room };
+    delete data.sockets;
+    delete data.clock;
+    delete data.uploading;
+    data.members = [...room.members].map(([hash, member]) => [hash, { ...member, connections: 0 }]);
+    data.playback = {
+      ...room.playback,
+      position: this.position(room),
+      playing: false,
+      updatedAt: Date.now(),
+    };
+    const filename = path.join(this.config.dataDir, 'permanent-room.json');
+    writeFileSync(`${filename}.tmp`, JSON.stringify({ version: 1, room: data }), {
+      mode: 0o600,
+      flush: true,
+    });
+    renameSync(`${filename}.tmp`, filename);
+  }
+  makePermanent(room) {
+    if (
+      [...this.rooms.values()].some((candidate) => candidate.permanent && candidate.id !== room.id)
+    )
+      throw new AppError(409, 'На сервере уже есть постоянная комната.');
+    const previous = { permanent: room.permanent, expiresAt: room.expiresAt };
+    room.permanent = true;
+    room.expiresAt = Number.MAX_SAFE_INTEGER;
+    try {
+      this.persist(room);
+    } catch (error) {
+      Object.assign(room, previous);
+      throw error;
+    }
+  }
+  leave(room, member) {
+    for (const [hash, value] of room.members) if (value.id === member.id) room.members.delete(hash);
+    for (const socket of room.sockets)
+      if (socket.member.id === member.id) socket.close(1000, 'Left room');
+    const next =
+      [...room.members.values()].find((m) => m.connections > 0) || [...room.members.values()][0];
+    if (room.hostId === member.id) room.hostId = next?.id || null;
+    if (room.controllerId === member.id) {
+      room.controllerId = next?.id || null;
+      this.control(room, { ...room.playback, position: this.position(room), playing: false });
+    }
+    room.revision++;
+  }
+  create({ name, title, permanent = false }) {
     if (this.rooms.size >= this.config.maxRooms)
       throw new AppError(503, 'Сервер заполнен. Попробуйте позже.');
     const room = {
@@ -32,6 +106,14 @@ export class RoomStore {
     room.hostId = session.member.id;
     room.controllerId = session.member.id;
     this.rooms.set(room.id, room);
+    if (permanent) {
+      try {
+        this.makePermanent(room);
+      } catch (error) {
+        this.rooms.delete(room.id);
+        throw error;
+      }
+    }
     return { room, ...session };
   }
   get(id) {
@@ -41,11 +123,18 @@ export class RoomStore {
     return room;
   }
   join(room, name) {
+    if (room.permanent && room.members.size >= this.config.maxMembers) {
+      const oldest = [...room.members]
+        .filter(([, m]) => !m.connections && m.id !== room.hostId)
+        .sort((a, b) => (a[1].lastSeen || 0) - (b[1].lastSeen || 0))[0];
+      if (oldest) room.members.delete(oldest[0]);
+    }
     if (room.members.size >= this.config.maxMembers)
       throw new AppError(409, 'В комнате уже 32 участника.');
     const token = randomBytes(32).toString('hex');
-    const member = { id: randomId(), name, connections: 0 };
+    const member = { id: randomId(), name, connections: 0, lastSeen: Date.now() };
     room.members.set(digest(token), member);
+    if (!room.hostId) room.hostId = member.id;
     return { token, member };
   }
   authenticate(room, token = '') {
@@ -54,7 +143,8 @@ export class RoomStore {
     return member;
   }
   host(room, member) {
-    if (member.id !== room.hostId) throw new AppError(403, 'Удалять видео может только ведущий.');
+    if (member.id !== room.hostId)
+      throw new AppError(403, 'Это действие доступно только ведущему.');
   }
   position(room) {
     return (
@@ -106,7 +196,8 @@ export class RoomStore {
       id: room.id,
       title: room.title,
       inviteUrl: this.config.publicOrigin ? `${this.config.publicOrigin}/room/${room.id}` : null,
-      expiresAt: room.expiresAt,
+      expiresAt: room.permanent ? null : room.expiresAt,
+      permanent: Boolean(room.permanent),
       revision: room.revision,
       playbackRevision: room.playbackRevision,
       controllerId: room.controllerId,
@@ -124,6 +215,7 @@ export class RoomStore {
     };
   }
   broadcast(room) {
+    this.persist(room);
     for (const socket of room.sockets) {
       if (socket.readyState === 1) {
         if (socket.bufferedAmount > 512 * 1024) socket.close(1013, 'Slow connection');

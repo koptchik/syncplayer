@@ -380,3 +380,84 @@ test('Kodik iframe imports safely and synchronizes play, pause and seek across m
     await guestContext.close();
   }
 });
+
+test('a host pins the room and leaves; the guest becomes host and can rejoin with the same invitation', async ({
+  browser,
+}) => {
+  const a = await browser.newContext(),
+    b = await browser.newContext();
+  try {
+    const host = await a.newPage(),
+      guest = await b.newPage();
+    await createRoom(host);
+    const url = host.url();
+    await joinRoom(guest, url);
+    await expect(guest.locator('#permanentButton')).not.toBeVisible();
+    await host.locator('#permanentButton').click();
+    await expect(host.locator('#roomBadge')).toHaveText('ПОСТОЯННАЯ КОМНАТА');
+    await host.locator('#leaveButton').click();
+    await expect(host).toHaveURL(/\/$/);
+    await expect(guest.locator('#peopleCount')).toHaveText('1');
+    await guest.locator('#profileButton').click();
+    await expect(guest.locator('#toast')).toContainText('ведущий');
+    await guest.locator('#leaveButton').click();
+    await expect(guest).toHaveURL(/\/$/);
+    await host.locator('#returnRoomButton').click();
+    await expect(host).toHaveURL(url);
+    await host.locator('#nameInput').fill('Снова дома');
+    await host.locator('#roomSubmit').click();
+    await expect(host.locator('#roomBadge')).toHaveText('ПОСТОЯННАЯ КОМНАТА');
+    await host.locator('#profileButton').click();
+    await expect(host.locator('#toast')).toContainText('ведущий');
+  } finally {
+    await a.close();
+    await b.close();
+  }
+});
+
+test('a catalog page offers player, dubbing and episode selection before adding to the queue', async ({
+  page,
+}) => {
+  await page.route('https://kodikplayer.com/**', (route) =>
+    route.fulfill({ path: path.resolve('tests/fixtures/kodik.html'), contentType: 'text/html' }),
+  );
+  await createRoom(page);
+  await page.route('**/api/rooms/*/resolve', (route) =>
+    route.fulfill({
+      json: {
+        title: 'Example',
+        options: [
+          {
+            id: 1,
+            player: 'Kodik',
+            dubbing: 'Voice A',
+            episode: '1',
+            title: 'Example · Voice A · 1',
+            supported: true,
+            url: 'https://kodikplayer.com/season/123/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa/720p?episode=1',
+          },
+          {
+            id: 2,
+            player: 'Kodik',
+            dubbing: 'Voice B',
+            episode: '2',
+            title: 'Example · Voice B · 2',
+            supported: true,
+            url: 'https://kodikplayer.com/season/123/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa/720p?episode=2',
+          },
+          { id: 3, player: 'Other', dubbing: 'Voice B', episode: '2', supported: false },
+        ],
+      },
+    }),
+  );
+  await page.locator('[data-source="link"]').click();
+  await page.locator('#urlInput').fill('https://old.yummyani.me/catalog/item/example');
+  await page.locator('#mediaSubmit').click();
+  await expect(page.locator('#pageChoices')).toBeVisible();
+  await expect(page.locator('#queueCount')).toHaveText('0');
+  await page.locator('#pageDubbing').selectOption('Voice B');
+  await expect(page.locator('#pageEpisode')).toHaveValue('2');
+  await page.locator('#mediaSubmit').click();
+  await expect(page.locator('#queueList')).toContainText('Example · Voice B · 2');
+  await expect(page.locator('#mediaMount iframe')).toHaveAttribute('src', /episode=2/);
+});

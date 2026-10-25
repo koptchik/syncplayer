@@ -11,6 +11,7 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { ZodError } from 'zod';
 import { RoomStore, randomId } from './rooms.mjs';
+import { createYummyResolver } from './yummy.mjs';
 import {
   AppError,
   createSchema,
@@ -44,6 +45,7 @@ export async function createApplication(config) {
   const store = new RoomStore(config);
   const uploadDir = path.join(config.dataDir, 'uploads');
   await mkdir(uploadDir, { recursive: true, mode: 0o700 });
+  store.loadPermanent();
   let usedBytes = 0;
   let reservedBytes = 0;
   let activeUploads = 0;
@@ -54,6 +56,8 @@ export async function createApplication(config) {
     usedBytes += info.size;
     orphanFiles.set(name, { size: info.size, expiresAt: info.mtimeMs + config.roomTtlMs });
   }
+  for (const room of store.rooms.values())
+    for (const media of room.queue) if (media.diskName) orphanFiles.delete(media.diskName);
   app.disable('x-powered-by');
   app.set('trust proxy', false);
   const securityHeaders = (secure) =>
@@ -142,6 +146,8 @@ export async function createApplication(config) {
   const chatLimiter = limiter(10000, 15);
   const controlLimiter = limiter(60000, 150);
   const mutationLimiter = limiter(60000, 60);
+  const resolveLimiter = limiter(60000, 10);
+  const resolvePage = createYummyResolver();
   app.use('/api', (_req, res, next) => {
     res.set('Cache-Control', 'no-store');
     next();
@@ -154,7 +160,7 @@ export async function createApplication(config) {
       sameSite: 'strict',
       secure: req.accessOrigin.startsWith('https:'),
       path: `/api/rooms/${room.id}`,
-      maxAge: Math.max(0, room.expiresAt - Date.now()),
+      maxAge: room.permanent ? 30 * 86400000 : Math.max(0, room.expiresAt - Date.now()),
     });
   }
   app.post('/api/rooms', roomLimiter, (req, res) => {
@@ -194,6 +200,28 @@ export async function createApplication(config) {
     }
   };
   app.get('/api/rooms/:id', (req, res) => res.json(store.snapshot(req.room, req.member)));
+  app.post('/api/rooms/:id/resolve', resolveLimiter, async (req, res) => {
+    if (typeof req.body?.url !== 'string' || req.body.url.length > 2048)
+      throw new AppError(400, 'Некорректная ссылка.');
+    res.json(await resolvePage(req.body.url));
+  });
+  app.post('/api/rooms/:id/permanent', hostOnly, mutationLimiter, (req, res) => {
+    store.makePermanent(req.room);
+    setSession(req, res, req.room, sessionToken(req));
+    store.broadcast(req.room);
+    res.json(store.snapshot(req.room, req.member));
+  });
+  app.post('/api/rooms/:id/leave', mutationLimiter, (req, res) => {
+    store.leave(req.room, req.member);
+    res.clearCookie(cookieName, {
+      path: `/api/rooms/${req.room.id}`,
+      httpOnly: true,
+      sameSite: 'strict',
+      secure: req.accessOrigin.startsWith('https:'),
+    });
+    store.broadcast(req.room);
+    res.json({ ok: true });
+  });
   app.post('/api/rooms/:id/chat', chatLimiter, (req, res) => {
     const { text } = chatSchema.parse(req.body);
     req.room.messages.push({
@@ -338,6 +366,7 @@ export async function createApplication(config) {
       if (problem) throw problem;
       if (!media || !media.bytes) throw new AppError(400, 'Выберите непустой видеофайл.');
       if (req.room.expiresAt <= Date.now()) throw new AppError(410, 'Срок действия комнаты истёк.');
+      store.authenticate(req.room, sessionToken(req));
       const item = store.add(req.room, media);
       usedBytes += media.bytes;
       finished = true;
@@ -409,7 +438,11 @@ export async function createApplication(config) {
     const { room, member } = ws;
     member.connections++;
     room.sockets.add(ws);
-    store.broadcast(room);
+    try {
+      store.broadcast(room);
+    } catch (error) {
+      console.error('Room persistence failed:', error.message);
+    }
     ws.on('error', () => {});
     ws.on('pong', () => {
       ws.alive = true;
@@ -434,6 +467,7 @@ export async function createApplication(config) {
     ws.on('close', () => {
       room.sockets.delete(ws);
       member.connections--;
+      member.lastSeen = Date.now();
       if (member.id === room.controllerId && member.connections === 0) {
         const next = [...room.members.values()].find((candidate) => candidate.connections > 0);
         if (next) {
@@ -444,7 +478,11 @@ export async function createApplication(config) {
           store.control(room, { ...room.playback, position: store.position(room), playing: false });
         }
       }
-      store.broadcast(room);
+      try {
+        store.broadcast(room);
+      } catch (error) {
+        console.error('Room persistence failed:', error.message);
+      }
     });
   });
   const heartbeat = setInterval(() => {
@@ -489,6 +527,7 @@ export async function createApplication(config) {
     server,
     store,
     async close() {
+      for (const room of store.rooms.values()) store.persist(room);
       clearInterval(heartbeat);
       clearInterval(janitor);
       for (const ws of wss.clients) ws.terminate();

@@ -89,9 +89,14 @@
             <h1><span id="roomTitle">Вечер с друзьями</span><span class="accent-dot">.</span></h1>
             <p>Разные города. Один момент.</p>
           </div>
-          <button class="primary" id="inviteButton">
-            <svg><use href="#i-plus" /></svg><span>Создать комнату</span>
-          </button>
+          <div class="room-actions">
+            <button id="returnRoomButton" class="small-button" hidden>Постоянная комната</button>
+            <button id="permanentButton" class="small-button" hidden>Закрепить комнату</button>
+            <button id="leaveButton" class="small-button" hidden>Выйти</button>
+            <button class="primary" id="inviteButton">
+              <svg><use href="#i-plus" /></svg><span>Создать комнату</span>
+            </button>
+          </div>
         </div>
         <nav class="mobile-tabs" aria-label="Раздел комнаты">
           <button data-panel="watch" aria-pressed="true">Просмотр и очередь</button
@@ -267,6 +272,10 @@
         ><label id="titleLabel"
           >Название комнаты<input id="titleInput" required maxlength="80" value="Вечер с друзьями"
         /></label>
+        <label id="permanentLabel" class="checkbox-label"
+          ><input type="checkbox" id="permanentInput" />Постоянная комната — сохранится после
+          перезапуска (одна на сервер)</label
+        >
         <p id="roomError" class="form-error" role="alert"></p>
         <button class="primary" id="roomSubmit">
           Создать комнату <svg><use href="#i-arrow" /></svg>
@@ -315,6 +324,15 @@
               placeholder="Например, аниме-вечер · серия 1"
           /></label>
           <p class="hint" id="sourceHint"></p>
+          <button type="button" id="findPlayers" class="small-button">
+            Найти плееры на странице YummyAnime
+          </button>
+          <div id="pageChoices" hidden>
+            <p id="pageChoicesHint" class="hint"></p>
+            <label>Плеер<select id="pagePlayer"></select></label>
+            <label>Озвучка<select id="pageDubbing"></select></label>
+            <label>Серия<select id="pageEpisode"></select></label>
+          </div>
         </div>
         <button class="primary" id="mediaSubmit">Добавить в очередь</button
         ><progress id="uploadProgress" max="100" value="0" hidden></progress>
@@ -346,8 +364,9 @@
         </li>
       </ol>
       <p class="hint">
-        Комнаты временные и сбрасываются при перезапуске сервера. Для друзей из интернета нужен
-        доступный сервер с HTTPS. У Twitch Live задержка зависит от самого сервиса.
+        Временные комнаты сбрасываются при перезапуске. Одну комнату можно закрепить: её ссылка и
+        очередь сохранятся. Для друзей из интернета нужен доступный сервер с HTTPS. У Twitch Live
+        задержка зависит от самого сервиса.
       </p>
     </dialog>
     <div id="toast" role="status" hidden></div>

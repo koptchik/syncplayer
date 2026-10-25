@@ -2,7 +2,13 @@ import { z } from 'zod';
 import { parseFragment } from 'parse5';
 
 const name = z.string().trim().min(1).max(40);
-export const createSchema = z.object({ name, title: z.string().trim().min(1).max(80) }).strict();
+export const createSchema = z
+  .object({
+    name,
+    title: z.string().trim().min(1).max(80),
+    permanent: z.boolean().optional().default(false),
+  })
+  .strict();
 export const joinSchema = z.object({ name }).strict();
 export const chatSchema = z.object({ text: z.string().trim().min(1).max(1000) }).strict();
 export const controlSchema = z
@@ -57,15 +63,21 @@ export function parseSource(input) {
   if (host === 'kodikplayer.com') {
     if (
       u.protocol !== 'https:' ||
-      !/^\/(seria|video)\/\d{1,15}\/[a-f0-9]{32}\/(?:360|480|720|1080)p\/?$/.test(u.pathname)
+      !/^\/(seria|video|season)\/\d{1,15}\/[a-f0-9]{32}\/(?:360|480|720|1080)p\/?$/.test(u.pathname)
     )
       throw new AppError(
         400,
         'Для Kodik нужен HTTPS-код конкретной серии или фильма (seria/video). Выберите серию и озвучку на сайте и скопируйте код плеера.',
       );
+    const episode = u.searchParams.get('episode');
+    if (u.pathname.startsWith('/season/') && !/^[1-9]\d{0,4}$/.test(episode || ''))
+      throw new AppError(400, 'Для сезона Kodik выберите конкретную серию.');
+    const suffix = u.pathname.startsWith('/season/')
+      ? `?translations=false&only_episode=true&only_season=true&episode=${episode}`
+      : '';
     return {
       type: 'kodik',
-      url: `https://kodikplayer.com${u.pathname}`,
+      url: `https://kodikplayer.com${u.pathname}${suffix}`,
       title: title || `Kodik · ${u.pathname.split('/')[2]}`,
       live: false,
     };

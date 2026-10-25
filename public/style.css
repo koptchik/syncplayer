@@ -1838,3 +1838,48 @@ dialog {
   outline: 2px solid var(--purple);
   outline-offset: 2px;
 }
+
+.room-actions {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: 8px;
+}
+.room-actions .small-button {
+  margin: 0;
+  min-height: 36px;
+}
+.checkbox-label {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  font-size: 12px;
+}
+.checkbox-label input {
+  width: auto;
+  flex: 0 0 auto;
+  margin-top: 4px;
+}
+#pageChoices select {
+  width: 100%;
+  min-width: 0;
+  padding: 10px;
+  background: #251d2c;
+  color: var(--text);
+  border: 1px solid #50365f;
+  border-radius: 7px;
+}
+#findPlayers {
+  margin: 10px 0;
+  white-space: normal;
+}
+@media (max-width: 500px) {
+  .room-actions {
+    max-width: 195px;
+    gap: 5px;
+  }
+  .room-actions .small-button {
+    font-size: 10px;
+    padding: 6px;
+  }
+}
