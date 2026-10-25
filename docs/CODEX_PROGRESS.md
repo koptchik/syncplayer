@@ -1,22 +1,22 @@
 # SyncPlayer Codex Progress
 
-- Last updated (UTC): 2026-10-25T12:14:57+00:00
-- Current stage/substage: A — foundation and link diagnostics (A1+A2 complete).
-- Status: deployed
-- Branch / commit SHA: test/yummy-network-boundary-a2 / aded055ec522c1b1ea7ad69f80016b938bdfeeb0; fast-forwarded to main after all checks.
-- Production deployed SHA: aded055ec522c1b1ea7ad69f80016b938bdfeeb0 (verified via release symlink after deployment).
+- Last updated (UTC): 2026-10-25T12:19:41+00:00
+- Current stage/substage: B0 — yt-dlp isolation and runtime feasibility preflight.
+- Status: blocked
+- Branch / commit SHA: main; base a2d0fe3af9816f8c4c92cc13cf48d3be4f2c40da.
+- Production deployed SHA: aded055ec522c1b1ea7ad69f80016b938bdfeeb0; verified during preflight.
 - Production URL: https://stream.koptchik.duckdns.org
-- Implemented & acceptance criteria met: Stage A complete across A1+A2: common safe source facade and network-free diagnostics; legacy sources/catalog preserved; DNS answers validated and pinned; fixed request paths; no redirects; DNS/response deadlines and 2 MiB cap; bounded concurrency/cache; rate-limit, rejected-input, SSRF and rebinding coverage. No dependency changes.
-- Commands/tests and outcomes: npm run check PASS (ESLint, Prettier, 31 server/security tests); npm run test:e2e PASS (13 Chromium scenarios). No external-network fixtures. Preflight confirmed current main and deploy permissions.
-- Deployment command and result: `/opt/syncplayer/deploy.sh aded055ec522c1b1ea7ad69f80016b938bdfeeb0`; deployment healthy, systemd active and exact SHA verified. No rollback needed.
-- Smoke test results: public `/api/health` returned 200; authenticated Yummy catalog classification passed; two independent production browser sessions played, sought and paused an uploaded fixture via WebSocket/HTTP. Test upload removed and sessions revoked. Temporary smoke room has no media and expires normally.
-- Known issues / blockers: A stage complete; Stage B has not started. Tests deterministically prove configured network behavior, not third-party uptime or a full penetration test. AGENTS.md remains unchanged. User-provided CODEX_SYNCPLAYER_ROADMAP.md remains local/untracked and excluded from formatting.
+- Implemented & acceptance criteria met: Stage A remains complete and deployed. No Stage B application code has been activated. Checked actual LXC worker and service isolation requirements before choosing an extractor.
+- Commands/tests and outcomes: Read-only LXC preflight: service active and `/api/health` OK. `yt-dlp` absent, `/usr/bin/bwrap` absent, `/usr/bin/prlimit` and `/usr/bin/unshare` available. The production unit has no `MemoryMax`, `CPUQuota`, `PrivateNetwork`, `IPAddressAllow` or `IPAddressDeny` restrictions. Deploy may invoke only the fixed root-owned release-switch command. No quota meter available.
+- Deployment command and result: No application deploy in B0; production remains on verified A2 SHA above.
+- Smoke test results: `/api/health` returned `{"ok":true}` during preflight.
+- Known issues / blockers: An extractor child process on this host would inherit unrestricted network access. Its initial URL allowlist would not constrain extractor/API/CDN requests, and subprocess flags alone are not an OS egress boundary. `prlimit` alone cannot enforce destination hosts. Enabling yt-dlp before a restricted worker/egress boundary exists would violate the roadmap's network-safety requirements.
 - Remaining tasks for next session (prioritized, max 5):
-  1. Plan the smallest Stage B increment around one or two explicit public providers and the yt-dlp isolation/resource constraints.
-  2. Do not enable any extractor until destination restrictions and subprocess/network isolation are tested.
-- Next single shippable increment: Stage B provider-scope and yt-dlp safety preflight; do not start until a new user-triggered continuation.
+  1. Provision a dedicated unprivileged yt-dlp worker with CPU/memory/time/output caps and an enforceable egress policy that validates every destination and DNS result; document one or two supported providers and their required host policy.
+  2. Then implement the adapter disabled by default, with mocked extractor/egress tests; enable only after the production worker passes the same boundary checks.
+- Next single shippable increment: deploy the restricted worker prerequisites through an approved Proxmox/LXC root operation, then resume B1.
 - Quota observed: unavailable; no percentage inferred.
 
 ## Architecture and scope
 
-Express authenticates room-scoped APIs and validates Origin/Host. RoomStore owns the queue and revision model, persisting one permanent room. PlayerController uses browser provider adapters. parseSource validates known links/iframe URLs; Yummy alone performs fixed-host HTTPS requests with DNS pinning and response limits. The facade reuses both rather than rewriting them. Inspection never fetches a submitted URL and describes format compatibility, not guaranteed playback. Direct media continues to load in viewers' browsers and retains its documented DNS/redirect/CORS limitations.
+Express validates room access and source URLs. `src/server/sources.mjs` routes known formats to browser playback; `src/server/yummy.mjs` is the only server-side fetcher and pins every connection to a checked public IPv4. RoomStore owns room and queue state. A new extractor would create a second server-side network client running external code. The current production unit has no egress or per-child resource sandbox, and the deploy account intentionally cannot change root-owned service configuration. Stage B remains off until those controls exist.
