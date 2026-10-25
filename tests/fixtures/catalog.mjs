@@ -1,0 +1,52 @@
+export const catalogUrl = 'https://old.yummyani.me/catalog/item/syncplayer-fixture';
+export const catalog = {
+  title: 'Test series',
+  options: [
+    {
+      id: '1'.repeat(24),
+      player: 'Kodik',
+      dubbing: 'Voice A',
+      episode: '1',
+      title: 'Test · A · 1',
+      supported: true,
+      url: 'https://kodikplayer.com/season/123/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa/720p?episode=1',
+    },
+    {
+      id: '2'.repeat(24),
+      player: 'Kodik',
+      dubbing: 'Voice B',
+      episode: '1',
+      title: 'Test · B · 1',
+      supported: true,
+      url: 'https://kodikplayer.com/season/124/bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb/720p?episode=1',
+    },
+    {
+      id: '3'.repeat(24),
+      player: 'CVH',
+      dubbing: 'Voice A',
+      episode: '1',
+      title: 'Test · CVH · 1',
+      supported: true,
+      url: 'https://ru.yummyani.me/iframeCVH.html?anime_id=123&episode=1&dubbing_code=VoiceA',
+    },
+    {
+      id: '4'.repeat(24),
+      player: 'CVH',
+      dubbing: 'Voice A',
+      episode: '2',
+      title: 'Test · CVH · 2',
+      supported: true,
+      url: 'https://ru.yummyani.me/iframeCVH.html?anime_id=123&episode=2&dubbing_code=VoiceA',
+    },
+    {
+      id: '5'.repeat(24),
+      player: 'Alloha',
+      dubbing: 'Voice A',
+      episode: '1',
+      title: 'Test · Alloha · 1',
+      supported: true,
+      manual: true,
+      url: 'https://alloha.yani.tv/?token_movie=aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa&token=bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb&translation=1&season=1&episode=1',
+    },
+  ],
+};

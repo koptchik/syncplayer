@@ -13,7 +13,7 @@ export default defineConfig({
     trace: 'retain-on-failure',
   },
   webServer: {
-    command: 'node src/server/index.mjs',
+    command: 'node tests/browser/server.mjs',
     url: 'http://127.0.0.1:3100/api/health',
     reuseExistingServer: false,
     env: {

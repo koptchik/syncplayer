@@ -1,0 +1,40 @@
+<!doctype html><meta charset="utf-8" /> <button id="play">Play</button
+><button id="pause">Pause</button><button id="seek">Seek</button>
+<script>
+  let time = 0,
+    playing = false,
+    at = performance.now();
+  const emit = (key, value) => parent.postMessage({ key: 'player_' + key, value }, '*');
+  const advance = () => {
+    if (playing) time += (performance.now() - at) / 1000;
+    at = performance.now();
+  };
+  const command = (method, values = {}) => {
+    advance();
+    if (method === 'play') {
+      playing = true;
+      emit('video_started');
+      emit('play');
+    }
+    if (method === 'pause') {
+      playing = false;
+      emit('pause');
+    }
+    if (method === 'seek') time = values.seconds;
+  };
+  addEventListener('message', ({ data }) => {
+    if (data?.method) command(data.method, data);
+  });
+  document.querySelector('#play').onclick = () => command('play');
+  document.querySelector('#pause').onclick = () => command('pause');
+  document.querySelector('#seek').onclick = () => command('seek', { seconds: 40 });
+  setInterval(() => {
+    advance();
+    emit('time_update', time);
+  }, 300);
+  window.snapshot = () => {
+    advance();
+    return { time, playing };
+  };
+  emit('duration_update', 300);
+</script>

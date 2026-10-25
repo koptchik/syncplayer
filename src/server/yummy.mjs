@@ -1,6 +1,7 @@
 import { request } from 'node:https';
 import { lookup } from 'node:dns/promises';
 import { BlockList, isIPv4 } from 'node:net';
+import { createHash } from 'node:crypto';
 import { parse } from 'parse5';
 import { AppError, parseSource } from './validation.mjs';
 
@@ -101,11 +102,33 @@ async function readPage(pathname) {
 export async function resolveYummy(input, read = readPage) {
   const pathname = yummyPath(input);
   const document = parse(await read(pathname));
-  let id, title;
+  let id, title, poster;
   const text = (node) => node.value || (node.childNodes || []).map(text).join('');
   const walk = (node) => {
     if (node.tagName === 'meta' && node.attrs.some((a) => a.name === 'id' && a.value === 'page_id'))
       id = node.attrs.find((a) => a.name === 'content')?.value;
+    if (
+      node.tagName === 'meta' &&
+      node.attrs.some((a) => a.name === 'property' && a.value === 'og:image')
+    ) {
+      try {
+        const url = new URL(
+          node.attrs.find((a) => a.name === 'content')?.value,
+          'https://old.yummyani.me',
+        );
+        if (
+          url.protocol === 'https:' &&
+          url.hostname === 'static.yani.tv' &&
+          !url.port &&
+          !url.username &&
+          !url.password &&
+          /^\/posters\/[a-z0-9/_.-]+$/i.test(url.pathname)
+        )
+          poster = url.href;
+      } catch {
+        /* Missing or untrusted artwork uses the title card. */
+      }
+    }
     if (node.tagName === 'h1') title = text(node).trim().slice(0, 120);
     for (const child of node.childNodes || []) walk(child);
   };
@@ -123,7 +146,11 @@ export async function resolveYummy(input, read = readPage) {
     throw new AppError(502, 'Источник вернул некорректный список видео.');
   }
   if (!Array.isArray(data.response)) throw new AppError(502, 'Источник не вернул список видео.');
-  const options = data.response.slice(0, 2000).map((item, index) => {
+  const options = data.response.slice(0, 2000).map((item) => {
+    const variantId = createHash('sha256')
+      .update(String(item.iframe_url) + '\n' + String(item.video_id || ''))
+      .digest('hex')
+      .slice(0, 24);
     const player = String(item.data?.player || 'Неизвестный плеер').slice(0, 80);
     const dubbing = String(item.data?.dubbing || 'Без названия').slice(0, 100);
     const episode = String(item.number || '?').slice(0, 30);
@@ -131,19 +158,32 @@ export async function resolveYummy(input, read = readPage) {
     try {
       const media = parseSource({ url: item.iframe_url, title: label });
       return {
-        id: index,
+        id: variantId,
         player,
         dubbing,
         episode,
         title: label,
         supported: true,
+        manual: Boolean(media.manual),
         url: media.url || item.iframe_url,
       };
     } catch {
-      return { id: index, player, dubbing, episode, supported: false };
+      return { id: variantId, player, dubbing, episode, supported: false };
     }
   });
-  return { title: title || 'YummyAnime', options };
+  return { title: title || 'YummyAnime', poster, options };
+}
+export function catalogMedia(catalogUrl, result, choice) {
+  return {
+    ...parseSource({ url: choice.url, title: choice.title }),
+    catalogUrl: `https://old.yummyani.me${yummyPath(catalogUrl)}`,
+    catalogTitle: result.title,
+    poster: result.poster,
+    variantId: choice.id,
+    playerLabel: choice.player,
+    dubbing: choice.dubbing,
+    episode: choice.episode,
+  };
 }
 export function createYummyResolver() {
   const cache = new Map();

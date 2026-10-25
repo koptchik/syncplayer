@@ -134,6 +134,29 @@
                 ▶ Нажмите, чтобы включить просмотр
               </button>
             </div>
+            <section
+              id="sourceControls"
+              class="source-controls"
+              aria-label="Источник просмотра"
+              hidden
+            >
+              <div class="source-selects">
+                <label>Плеер<select id="watchPlayer" aria-label="Плеер просмотра"></select></label>
+                <label
+                  >Озвучка<select id="watchDubbing" aria-label="Озвучка просмотра"></select
+                ></label>
+                <label>Серия<select id="watchEpisode" aria-label="Серия просмотра"></select></label>
+                <button id="applySource" class="small-button">Применить всем</button>
+                <button id="refreshSources" class="text-button">Обновить</button>
+              </div>
+              <p id="sourceStatus" class="hint" role="status"></p>
+            </section>
+            <div id="externalControls" class="external-controls" hidden>
+              <button data-playback="play" class="small-button">▶ Смотреть</button>
+              <button data-playback="pause" class="small-button">Ⅱ Пауза</button>
+              <button data-playback="back" class="small-button">−10 с</button>
+              <button data-playback="forward" class="small-button">+10 с</button>
+            </div>
             <div class="playback-bar">
               <div class="playback-status">
                 <span class="status-dot" id="statusDot"></span
@@ -148,6 +171,7 @@
             <section class="queue-panel" aria-label="Очередь просмотра">
               <div class="section-heading">
                 <h2>Очередь просмотра <span class="count" id="queueCount">0</span></h2>
+                <button class="text-button purple" id="rouletteButton">✦ Рулетка</button>
                 <button class="text-button purple" id="addButton">
                   <svg><use href="#i-plus" /></svg>Добавить
                 </button>
@@ -324,15 +348,6 @@
               placeholder="Например, аниме-вечер · серия 1"
           /></label>
           <p class="hint" id="sourceHint"></p>
-          <button type="button" id="findPlayers" class="small-button">
-            Найти плееры на странице YummyAnime
-          </button>
-          <div id="pageChoices" hidden>
-            <p id="pageChoicesHint" class="hint"></p>
-            <label>Плеер<select id="pagePlayer"></select></label>
-            <label>Озвучка<select id="pageDubbing"></select></label>
-            <label>Серия<select id="pageEpisode"></select></label>
-          </div>
         </div>
         <button class="primary" id="mediaSubmit">Добавить в очередь</button
         ><progress id="uploadProgress" max="100" value="0" hidden></progress>
@@ -347,6 +362,31 @@
       <label>Ссылка-приглашение<input id="inviteUrl" readonly /></label
       ><button class="primary" id="copyInvite">Скопировать ссылку</button>
       <p class="hint" id="inviteHint"></p>
+    </dialog>
+    <dialog id="rouletteDialog" aria-labelledby="rouletteTitle">
+      <button class="close" data-close="rouletteDialog" aria-label="Закрыть">×</button>
+      <span class="eyebrow">ПУСТЬ ВЕЧЕР РЕШИТ САМ</span>
+      <h2 id="rouletteTitle">Рулетка вечера</h2>
+      <p id="rouletteHint">Каждый предлагает до трёх видео. Ведущий запускает рулетку.</p>
+      <div id="rouletteStage" class="roulette-stage" hidden>
+        <div class="roulette-ring"></div>
+        <div class="roulette-pointer">▼</div>
+        <div id="rouletteWheel" class="roulette-wheel"></div>
+        <div class="roulette-center">
+          <span>СЕГОДНЯ СМОТРИМ</span><b id="rouletteRemaining">?</b>
+        </div>
+      </div>
+      <p id="rouletteStatus" class="roulette-status" role="status" aria-live="polite"></p>
+      <div id="rouletteCandidates" class="roulette-candidates"></div>
+      <div class="roulette-actions">
+        <button id="rouletteAdd" class="small-button">＋ Добавить видео</button>
+        <button id="rouletteStart" class="primary">Запустить рулетку</button>
+        <button id="rouletteReset" class="small-button" hidden>Новый раунд</button>
+      </div>
+      <p class="hint">
+        Один вариант — один шанс. Повторные предложения не увеличивают вероятность. Выбывшие видео
+        остаются в очереди.
+      </p>
     </dialog>
     <dialog id="helpDialog">
       <button class="close" data-close="helpDialog" aria-label="Закрыть">×</button

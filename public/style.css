@@ -1860,19 +1860,6 @@ dialog {
   flex: 0 0 auto;
   margin-top: 4px;
 }
-#pageChoices select {
-  width: 100%;
-  min-width: 0;
-  padding: 10px;
-  background: #251d2c;
-  color: var(--text);
-  border: 1px solid #50365f;
-  border-radius: 7px;
-}
-#findPlayers {
-  margin: 10px 0;
-  white-space: normal;
-}
 @media (max-width: 500px) {
   .room-actions {
     max-width: 195px;
@@ -1881,5 +1868,326 @@ dialog {
   .room-actions .small-button {
     font-size: 10px;
     padding: 6px;
+  }
+}
+
+.source-controls {
+  flex-shrink: 0;
+  max-height: 130px;
+  overflow: auto;
+  padding-top: 8px;
+  scrollbar-width: thin;
+}
+.source-selects {
+  display: flex;
+  gap: 8px;
+  align-items: end;
+}
+.source-selects label {
+  flex: 1;
+  min-width: 0;
+  margin: 0;
+  font-size: 10px;
+}
+.source-selects select {
+  display: block;
+  width: 100%;
+  min-width: 0;
+  padding: 7px;
+  border: 1px solid #50365f;
+  border-radius: 6px;
+  background: #251d2c;
+  color: var(--text);
+}
+.source-selects button {
+  margin: 0;
+  min-height: 32px;
+}
+#sourceStatus {
+  margin: 4px 0;
+  font-size: 10px;
+}
+.external-controls {
+  display: flex;
+  gap: 8px;
+  flex-shrink: 0;
+  padding-top: 6px;
+}
+.external-controls .small-button {
+  margin: 0;
+}
+@media (max-width: 850px) {
+  .source-selects {
+    flex-wrap: wrap;
+  }
+  .source-selects label {
+    flex-basis: 28%;
+  }
+  .source-controls {
+    max-height: 125px;
+  }
+}
+@media (max-height: 620px) {
+  .source-controls {
+    max-height: 68px;
+  }
+  .queue-panel {
+    flex-basis: 72px;
+    min-height: 54px;
+  }
+  .source-grid {
+    display: none;
+  }
+  .external-controls {
+    padding-top: 4px;
+  }
+  .external-controls .small-button {
+    padding: 5px;
+  }
+}
+
+#rouletteDialog {
+  width: min(850px, calc(100vw - 24px));
+  max-height: calc(100dvh - 24px);
+  padding: 30px;
+  overflow: auto;
+  background: radial-gradient(ellipse at 50% 35%, #392649 0%, #19141f 70%);
+}
+#rouletteDialog h2 {
+  margin: 12px 0 8px;
+}
+#rouletteHint {
+  font-size: 13px;
+  color: var(--muted);
+}
+.roulette-candidates {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(120px, 1fr));
+  gap: 12px;
+  margin: 20px 0;
+  max-height: 45dvh;
+  overflow: auto;
+  padding: 4px;
+}
+.roulette-candidate {
+  border: 1px solid #594167;
+  border-radius: 14px;
+  background: #211929;
+  color: var(--text);
+  padding: 7px;
+  text-align: left;
+  transition:
+    transform 0.2s,
+    border-color 0.2s;
+}
+.roulette-candidate:hover {
+  transform: translateY(-3px);
+  border-color: #cdb2ff;
+}
+.roulette-candidate.nominated {
+  border-color: #ba9af3;
+  box-shadow: 0 0 0 2px #a680e944;
+}
+.roulette-candidate[aria-pressed='true'] {
+  background: #44315c;
+}
+.roulette-candidate small {
+  display: block;
+  font-size: 10px;
+  padding: 5px 2px;
+  color: #d5c3e5;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.roulette-card {
+  border-radius: 10px;
+  overflow: hidden;
+  background: #241a30;
+  box-shadow: 0 8px 22px #0005;
+}
+.roulette-art {
+  position: relative;
+  aspect-ratio: 3/4;
+  display: grid;
+  place-items: center;
+  overflow: hidden;
+  background:
+    radial-gradient(circle at 20% 15%, hsl(var(--art-hue) 65% 65% / 0.7), transparent 65%),
+    linear-gradient(145deg, hsl(var(--art-hue) 38% 29%), #17131f);
+}
+.roulette-art::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  background: linear-gradient(transparent 65%, #17101f99);
+  pointer-events: none;
+}
+.roulette-art span {
+  font-size: 32px;
+  font-weight: 800;
+  letter-spacing: -2px;
+  color: #fff9;
+}
+.roulette-art img {
+  position: absolute;
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+.roulette-card strong {
+  display: -webkit-box;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+  overflow: hidden;
+  font-size: 11px;
+  line-height: 1.4;
+  padding: 7px;
+  height: 43px;
+}
+.roulette-actions {
+  display: flex;
+  gap: 10px;
+  align-items: center;
+  flex-wrap: wrap;
+}
+.roulette-actions .primary {
+  width: auto;
+  margin: 0;
+}
+.roulette-status {
+  text-align: center;
+  font-weight: 600;
+  min-height: 40px;
+  color: #e4d4ff;
+}
+.roulette-stage {
+  overflow: clip;
+  --radius: 120px;
+  position: relative;
+  width: 370px;
+  height: 370px;
+  max-width: 100%;
+  margin: 15px auto 25px;
+}
+.roulette-ring {
+  position: absolute;
+  inset: 12px;
+  border: 1px solid #c7a8ff55;
+  border-radius: 50%;
+  background: repeating-conic-gradient(from 0deg, #b48ce633 0deg 1deg, transparent 1deg 10deg);
+  mask: radial-gradient(transparent 66%, #000 67%);
+  animation: roulette-turn 12s linear infinite;
+}
+.roulette-pointer {
+  position: absolute;
+  top: -8px;
+  left: 50%;
+  transform: translateX(-50%);
+  color: #e6d3ff;
+  filter: drop-shadow(0 0 8px #b58bff);
+  z-index: 3;
+}
+.roulette-wheel {
+  position: absolute;
+  inset: 0;
+}
+.roulette-wheel .roulette-card {
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  width: 72px;
+  transform: translate(-50%, -50%) rotate(var(--angle)) translateY(calc(-1 * var(--radius)))
+    rotate(calc(-1 * var(--angle)));
+  transition:
+    transform 0.8s cubic-bezier(0.2, 0.8, 0.2, 1),
+    opacity 0.6s,
+    filter 0.3s,
+    box-shadow 0.2s;
+  border: 1px solid #ad8ec466;
+}
+.roulette-wheel .roulette-card strong {
+  font-size: 8px;
+  padding: 4px;
+  height: 30px;
+}
+.roulette-wheel .roulette-card.spotlight {
+  box-shadow:
+    0 0 0 3px #dfc2ff,
+    0 0 28px #b982ff;
+  filter: brightness(1.3);
+  z-index: 2;
+}
+.roulette-wheel .roulette-card.eliminated {
+  opacity: 0;
+  transform: translate(-50%, -50%) rotate(var(--angle)) translateY(-190px) scale(0.25) rotate(35deg);
+  filter: grayscale(1);
+}
+.roulette-center {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  pointer-events: none;
+}
+.roulette-center span {
+  font-size: 8px;
+  letter-spacing: 2px;
+  color: #ad8ec4;
+}
+.roulette-center b {
+  font-size: 42px;
+  color: #d7b7ff;
+}
+.roulette-wheel .roulette-card.winner {
+  width: 140px;
+  transform: translate(-50%, -50%);
+  box-shadow:
+    0 0 0 2px #edd8ff,
+    0 0 80px #af65ff88;
+  z-index: 4;
+}
+.finished .roulette-center {
+  opacity: 0;
+}
+.finished .roulette-ring {
+  background: repeating-conic-gradient(#ddb5ff 0deg 1deg, transparent 1deg 14deg);
+  animation-duration: 30s;
+}
+@keyframes roulette-turn {
+  to {
+    transform: rotate(360deg);
+  }
+}
+@media (max-width: 500px) {
+  #rouletteDialog {
+    padding: 23px 15px;
+  }
+  .roulette-stage {
+    --radius: 98px;
+    width: 300px;
+    height: 310px;
+  }
+  .roulette-wheel .roulette-card {
+    width: 59px;
+  }
+  .roulette-candidates {
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+    gap: 8px;
+  }
+  .roulette-actions .primary {
+    flex: 1;
+    font-size: 12px;
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .roulette-ring {
+    animation: none;
+  }
+  .roulette-wheel .roulette-card,
+  .roulette-candidate {
+    transition: none;
   }
 }

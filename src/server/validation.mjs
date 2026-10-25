@@ -14,6 +14,7 @@ export const chatSchema = z.object({ text: z.string().trim().min(1).max(1000) })
 export const controlSchema = z
   .object({
     mediaId: z.string().regex(/^[a-f0-9]{32}$/),
+    sourceVersion: z.number().int().nonnegative().optional().default(0),
     position: z.number().finite().min(0).max(864000),
     playing: z.boolean(),
     checkpoint: z.boolean().optional().default(false),
@@ -60,6 +61,41 @@ export function parseSource(input) {
     throw new AppError(400, 'Нужна обычная ссылка без пароля и нестандартного порта.');
   }
   const host = u.hostname.toLowerCase().replace(/\.$/, '');
+  if (host === 'ru.yummyani.me' && u.protocol === 'https:' && u.pathname === '/iframeCVH.html') {
+    const anime = u.searchParams.get('anime_id'),
+      episode = u.searchParams.get('episode'),
+      dubbing = u.searchParams.get('dubbing_code');
+    if (
+      !/^\d{1,10}$/.test(anime || '') ||
+      !/^[1-9]\d{0,4}$/.test(episode || '') ||
+      !/^[\p{L}\p{N} _.-]{1,100}$/u.test(dubbing || '')
+    )
+      throw new AppError(400, 'В ссылке CVH нужны аниме, озвучка и серия.');
+    const params = new URLSearchParams({ anime_id: anime, episode, dubbing_code: dubbing });
+    return {
+      type: 'cvh',
+      url: `https://ru.yummyani.me/iframeCVH.html?${params}`,
+      title: title || `CVH · серия ${episode}`,
+      live: false,
+    };
+  }
+  if (host === 'alloha.yani.tv' && u.protocol === 'https:' && u.pathname === '/') {
+    const params = new URLSearchParams();
+    for (const name of ['token_movie', 'token', 'translation', 'season', 'episode']) {
+      const value = u.searchParams.get(name);
+      if (!(name.startsWith('token') ? /^[a-f0-9]{20,64}$/ : /^\d{1,10}$/).test(value || ''))
+        throw new AppError(400, 'Неполная ссылка плеера Alloha.');
+      params.set(name, value);
+    }
+    params.set('hidden', 'translation,season,episode');
+    return {
+      type: 'alloha',
+      url: `https://alloha.yani.tv/?${params}`,
+      title: title || 'Alloha',
+      live: false,
+      manual: true,
+    };
+  }
   if (host === 'kodikplayer.com') {
     if (
       u.protocol !== 'https:' ||

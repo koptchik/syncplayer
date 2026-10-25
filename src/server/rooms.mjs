@@ -1,4 +1,4 @@
-import { randomBytes, createHash } from 'node:crypto';
+import { randomBytes, randomInt, createHash } from 'node:crypto';
 import { performance } from 'node:perf_hooks';
 import { AppError } from './validation.mjs';
 import { readFileSync, writeFileSync, renameSync } from 'node:fs';
@@ -153,6 +153,7 @@ export class RoomStore {
     );
   }
   control(room, data, member) {
+    if (member) this.ensureNotDrawing(room);
     if (
       data.checkpoint &&
       (member?.id !== room.controllerId || data.revision !== room.playbackRevision)
@@ -162,10 +163,13 @@ export class RoomStore {
     if (data.mediaId !== room.playback.mediaId)
       throw new AppError(409, 'Видео уже изменилось. Повторите действие.');
     const media = room.queue.find((m) => m.id === data.mediaId);
+    if (member && (data.sourceVersion || 0) !== (media?.sourceVersion || 0))
+      throw new AppError(409, 'Плеер или озвучка уже изменились.');
+    if (media?.manual && member) throw new AppError(409, 'Этот внешний плеер управляется вручную.');
     room.playback = {
       mediaId: data.mediaId,
       playing: data.playing,
-      rate: media?.type === 'twitch' ? 1 : data.rate,
+      rate: ['twitch', 'cvh'].includes(media?.type) ? 1 : data.rate,
       position: media?.live ? 0 : data.position,
       updatedAt: Date.now(),
     };
@@ -175,6 +179,7 @@ export class RoomStore {
     room.revision++;
   }
   select(room, id, member) {
+    this.ensureNotDrawing(room);
     if (!room.queue.some((m) => m.id === id)) throw new AppError(404, 'Видео не найдено.');
     room.playback = { mediaId: id, position: 0, playing: false, rate: 1, updatedAt: Date.now() };
     room.clock = performance.now();
@@ -190,6 +195,74 @@ export class RoomStore {
     if (!room.playback.mediaId) this.select(room, item.id);
     room.revision++;
     return item;
+  }
+  changeVariant(room, id, sourceVersion, media, member) {
+    this.ensureNotDrawing(room);
+    const item = room.queue.find((m) => m.id === id);
+    if (
+      !item?.catalogUrl ||
+      room.playback.mediaId !== id ||
+      (item.sourceVersion || 0) !== sourceVersion
+    )
+      throw new AppError(409, 'Видео или источник уже изменились. Повторите выбор.');
+    const position =
+      item.episode === media.episode && !item.manual && !media.manual ? this.position(room) : 0;
+    const replacement = { ...media, id, sourceVersion: sourceVersion + 1 };
+    room.queue[room.queue.indexOf(item)] = replacement;
+    room.playback = { mediaId: id, position, playing: false, rate: 1, updatedAt: Date.now() };
+    room.clock = performance.now();
+    room.controllerId = member.id;
+    room.playbackRevision++;
+    room.revision++;
+  }
+  ensureNotDrawing(room) {
+    if (room.roulette?.endsAt > Date.now())
+      throw new AppError(409, 'Рулетка ещё вращается. Дождитесь результата.');
+  }
+  nominate(room, mediaId, member) {
+    this.ensureNotDrawing(room);
+    if (!room.queue.some((m) => m.id === mediaId)) throw new AppError(404, 'Видео не найдено.');
+    room.roulette ||= { nominations: [] };
+    if (room.roulette.order) throw new AppError(409, 'Ведущий должен начать новый раунд.');
+    const nominations = room.roulette.nominations;
+    const index = nominations.findIndex((n) => n.mediaId === mediaId && n.memberId === member.id);
+    if (index >= 0) nominations.splice(index, 1);
+    else {
+      if (nominations.filter((n) => n.memberId === member.id).length >= 3)
+        throw new AppError(409, 'Можно предложить до трёх вариантов за раунд.');
+      if (nominations.length >= 96) throw new AppError(409, 'Рулетка заполнена.');
+      nominations.push({ mediaId, memberId: member.id, name: member.name });
+    }
+    room.revision++;
+  }
+  draw(room, member) {
+    this.host(room, member);
+    this.ensureNotDrawing(room);
+    if (room.roulette?.order) throw new AppError(409, 'Начните новый раунд.');
+    const ids = [...new Set((room.roulette?.nominations || []).map((n) => n.mediaId))].filter(
+      (id) => room.queue.some((m) => m.id === id),
+    );
+    if (ids.length < 2) throw new AppError(409, 'Предложите хотя бы два разных видео.');
+    // Unbiased Fisher–Yates: each distinct candidate has an equal chance.
+    for (let i = ids.length - 1; i > 0; i--) {
+      const j = randomInt(i + 1);
+      [ids[i], ids[j]] = [ids[j], ids[i]];
+    }
+    this.select(room, ids.at(-1), member);
+    room.roulette = {
+      ...room.roulette,
+      id: randomId(),
+      order: ids,
+      startedAt: Date.now(),
+      endsAt: Date.now() + 11000,
+    };
+    room.revision++;
+  }
+  resetDraw(room, member) {
+    this.host(room, member);
+    this.ensureNotDrawing(room);
+    room.roulette = { nominations: [] };
+    room.revision++;
   }
   snapshot(room, member) {
     return {
@@ -210,6 +283,7 @@ export class RoomStore {
       })),
       queue: room.queue.map(({ diskName: _diskName, ...m }) => m),
       messages: room.messages,
+      roulette: room.roulette || { nominations: [] },
       playback: { ...room.playback, position: this.position(room), updatedAt: Date.now() },
       serverTime: Date.now(),
     };

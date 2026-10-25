@@ -11,7 +11,7 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { ZodError } from 'zod';
 import { RoomStore, randomId } from './rooms.mjs';
-import { createYummyResolver } from './yummy.mjs';
+import { createYummyResolver, catalogMedia } from './yummy.mjs';
 import {
   AppError,
   createSchema,
@@ -20,6 +20,7 @@ import {
   controlSchema,
   idSchema,
   parseSource,
+  sourceSchema,
 } from './validation.mjs';
 
 const publicDir = fileURLToPath(new URL('../../public/', import.meta.url));
@@ -39,7 +40,7 @@ function sessionToken(req) {
   return value?.slice(cookieName.length + 1) || '';
 }
 
-export async function createApplication(config) {
+export async function createApplication(config, { resolveCatalog = createYummyResolver() } = {}) {
   const app = express();
   const server = createServer(app);
   const store = new RoomStore(config);
@@ -73,8 +74,10 @@ export async function createApplication(config) {
             'https://player.vimeo.com',
           ],
           styleSrc: ["'self'", "'unsafe-inline'"],
-          imgSrc: ["'self'", 'data:', 'https://i.ytimg.com'],
+          imgSrc: ["'self'", 'data:', 'https://i.ytimg.com', 'https://static.yani.tv'],
           frameSrc: [
+            'https://ru.yummyani.me',
+            'https://alloha.yani.tv',
             'https://kodikplayer.com',
             'https://www.youtube.com',
             'https://www.youtube-nocookie.com',
@@ -147,7 +150,7 @@ export async function createApplication(config) {
   const controlLimiter = limiter(60000, 150);
   const mutationLimiter = limiter(60000, 60);
   const resolveLimiter = limiter(60000, 10);
-  const resolvePage = createYummyResolver();
+  const resolvePage = resolveCatalog;
   app.use('/api', (_req, res, next) => {
     res.set('Cache-Control', 'no-store');
     next();
@@ -205,6 +208,52 @@ export async function createApplication(config) {
       throw new AppError(400, 'Некорректная ссылка.');
     res.json(await resolvePage(req.body.url));
   });
+  app.post('/api/rooms/:id/catalog', resolveLimiter, async (req, res) => {
+    const input = sourceSchema.parse(req.body);
+    const result = await resolvePage(input.url);
+    store.get(req.room.id);
+    store.authenticate(req.room, sessionToken(req));
+    const choice =
+      result.options.find((o) => o.supported && o.url.startsWith('https://kodikplayer.com/')) ||
+      result.options.find((o) => o.supported);
+    if (!choice) throw new AppError(400, 'На странице нет поддерживаемых плееров.');
+    const media = catalogMedia(input.url, result, choice);
+    const item = store.add(req.room, { ...media, catalogTitle: input.title || media.catalogTitle });
+    store.broadcast(req.room);
+    res.status(201).json(item);
+  });
+  app.get('/api/rooms/:id/media/:mediaId/options', resolveLimiter, async (req, res) => {
+    const media = req.room.queue.find((m) => m.id === idSchema.parse(req.params.mediaId));
+    if (!media?.catalogUrl) throw new AppError(404, 'У этого видео нет страницы каталога.');
+    res.json(await resolvePage(media.catalogUrl));
+  });
+  app.post('/api/rooms/:id/media/:mediaId/variant', mutationLimiter, async (req, res) => {
+    const id = idSchema.parse(req.params.mediaId);
+    if (
+      typeof req.body?.variantId !== 'string' ||
+      !/^[a-f0-9]{24}$/.test(req.body.variantId) ||
+      !Number.isSafeInteger(req.body.sourceVersion) ||
+      req.body.sourceVersion < 0
+    )
+      throw new AppError(400, 'Некорректный выбор источника.');
+    const media = req.room.queue.find((m) => m.id === id);
+    if (!media?.catalogUrl) throw new AppError(404, 'Страница каталога не найдена.');
+    const result = await resolvePage(media.catalogUrl);
+    store.get(req.room.id);
+    store.authenticate(req.room, sessionToken(req));
+    const choice = result.options.find((o) => o.id === req.body.variantId && o.supported);
+    if (!choice)
+      throw new AppError(409, 'Этот вариант больше не доступен. Обновите список плееров.');
+    store.changeVariant(
+      req.room,
+      id,
+      req.body.sourceVersion,
+      { ...catalogMedia(media.catalogUrl, result, choice), catalogTitle: media.catalogTitle },
+      req.member,
+    );
+    store.broadcast(req.room);
+    res.json(store.snapshot(req.room, req.member));
+  });
   app.post('/api/rooms/:id/permanent', hostOnly, mutationLimiter, (req, res) => {
     store.makePermanent(req.room);
     setSession(req, res, req.room, sessionToken(req));
@@ -236,6 +285,21 @@ export async function createApplication(config) {
     store.broadcast(req.room);
     res.status(201).json({ ok: true });
   });
+  app.post('/api/rooms/:id/roulette/nominate', mutationLimiter, (req, res) => {
+    store.nominate(req.room, idSchema.parse(req.body?.mediaId), req.member);
+    store.broadcast(req.room);
+    res.json(store.snapshot(req.room, req.member));
+  });
+  app.post('/api/rooms/:id/roulette/draw', mutationLimiter, (req, res) => {
+    store.draw(req.room, req.member);
+    store.broadcast(req.room);
+    res.json(store.snapshot(req.room, req.member));
+  });
+  app.post('/api/rooms/:id/roulette/reset', mutationLimiter, (req, res) => {
+    store.resetDraw(req.room, req.member);
+    store.broadcast(req.room);
+    res.json(store.snapshot(req.room, req.member));
+  });
   app.post('/api/rooms/:id/control', controlLimiter, (req, res) => {
     store.control(req.room, controlSchema.parse(req.body), req.member);
     store.broadcast(req.room);
@@ -261,7 +325,12 @@ export async function createApplication(config) {
     }
   }
   app.delete('/api/rooms/:id/media/:mediaId', hostOnly, mutationLimiter, async (req, res) => {
+    store.ensureNotDrawing(req.room);
     const mediaId = idSchema.parse(req.params.mediaId);
+    if (req.room.roulette)
+      req.room.roulette.nominations = req.room.roulette.nominations.filter(
+        (n) => n.mediaId !== mediaId,
+      );
     const index = req.room.queue.findIndex((m) => m.id === mediaId);
     if (index < 0) throw new AppError(404, 'Видео не найдено.');
     const [media] = req.room.queue.splice(index, 1);

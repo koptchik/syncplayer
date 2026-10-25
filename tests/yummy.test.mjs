@@ -37,7 +37,7 @@ test('page discovery exposes translations and locks a Kodik season to the select
   const result = await resolveYummy('https://old.yummyani.me/catalog/item/example', async (url) => {
     urls.push(url);
     return url.startsWith('/catalog/')
-      ? '<meta id="page_id" content="123"><h1>Example &amp; title</h1>'
+      ? '<meta id="page_id" content="123"><meta property="og:image" content="//static.yani.tv/posters/full/123.jpg"><h1>Example &amp; title</h1>'
       : JSON.stringify({
           response: [
             { data: { player: 'Kodik', dubbing: 'Voice A' }, number: '2', iframe_url: season },
@@ -51,6 +51,7 @@ test('page discovery exposes translations and locks a Kodik season to the select
   });
   assert.deepEqual(urls, ['/catalog/item/example', '/api/anime/123/videos']);
   assert.equal(result.title, 'Example & title');
+  assert.equal(result.poster, 'https://static.yani.tv/posters/full/123.jpg');
   assert.equal(result.options[0].dubbing, 'Voice A');
   assert.equal(result.options[0].supported, true);
   assert.equal(result.options[1].supported, false);

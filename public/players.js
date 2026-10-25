@@ -1,4 +1,5 @@
 import { createKodikAdapter } from './kodik.js';
+import { createCvhAdapter } from './cvh.js';
 
 const scripts = new Map();
 function loadScript(url, ready) {
@@ -43,6 +44,7 @@ export class PlayerController {
     this.ignoreUntil = 0;
     this.adapter = null;
     this.mediaId = null;
+    this.sourceVersion = 0;
     this.ready = false;
   }
   event(kind = 'state') {
@@ -77,14 +79,29 @@ export class PlayerController {
     this.adapter?.destroy();
     this.adapter = null;
     this.mediaId = media?.id || null;
+    this.sourceVersion = media?.sourceVersion || 0;
     this.mount.replaceChildren();
     this.blocked(false);
     if (!media) return;
     this.notice('Подключаем видео…');
     const current = () => generation === this.generation;
     try {
-      if (media.type === 'kodik') {
-        this.adapter = createKodikAdapter(this.mount, media, {
+      if (media.type === 'alloha') {
+        const frame = document.createElement('iframe');
+        frame.src = media.url;
+        frame.title = media.title;
+        frame.allow = 'autoplay; fullscreen; picture-in-picture';
+        frame.allowFullscreen = true;
+        frame.setAttribute('sandbox', 'allow-scripts allow-same-origin allow-presentation');
+        this.mount.append(frame);
+        this.adapter = { destroy: () => frame.remove(), pause: () => frame.remove() };
+        this.notice(
+          'Alloha управляется вручную: пауза и перемотка у каждого свои. Если плеер недоступен или показывает ошибку, выберите Kodik или CVH.',
+        );
+        return;
+      } else if (media.type === 'kodik' || media.type === 'cvh') {
+        const createAdapter = media.type === 'cvh' ? createCvhAdapter : createKodikAdapter;
+        this.adapter = createAdapter(this.mount, media, {
           changed: (kind) => {
             if (current()) this.event(kind);
           },

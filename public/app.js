@@ -1,4 +1,5 @@
 import { PlayerController } from './players.js';
+import { createRoulette } from './roulette.js';
 const $ = (selector) => document.querySelector(selector);
 const $$ = (selector) => [...document.querySelectorAll(selector)];
 const routeId = () => location.pathname.match(/^\/room\/([a-f0-9]{32})\/?$/)?.[1];
@@ -11,6 +12,7 @@ let skew = 0;
 let forceNext = true;
 let mediaGeneration = 0;
 let selectedSource = 'file';
+let addForRoulette = false;
 let pendingSource = null;
 let joining = false;
 let roomUnavailable = false;
@@ -20,8 +22,11 @@ let controlTimer;
 let controlSending = false;
 let pendingControl = null;
 let queueSignature = '';
-let pageOptions = [];
-let resolvedPageUrl = '';
+let sourceOptions = [];
+let optionsMediaId = null;
+let optionsRequestId = 0;
+let optionsLoading = false;
+let sourceSignature = '';
 let leaving = false;
 const seenMessages = new Set();
 function storedName() {
@@ -78,7 +83,13 @@ const player = new PlayerController($('#mediaMount'), {
     if (room && connected) scheduleControl();
   },
   async ended() {
-    if (!room || room.controllerId !== room.me.id || !connected) return;
+    if (
+      !room ||
+      room.controllerId !== room.me.id ||
+      !connected ||
+      room.roulette?.endsAt > Date.now() + skew
+    )
+      return;
     const index = room.queue.findIndex((media) => media.id === room.playback.mediaId);
     const next = room.queue[index + 1];
     if (next) {
@@ -98,12 +109,13 @@ function options(force = false) {
   return { force, skew, live: room?.queue.find((m) => m.id === room.playback.mediaId)?.live };
 }
 function scheduleControl(checkpoint = false) {
-  if (!room || !connected || !player.ready) return;
+  if (!room || !connected || !player.ready || room.roulette?.endsAt > Date.now() + skew) return;
   if (checkpoint && pendingControl && !pendingControl.checkpoint) return;
   const state = player.state();
   if (!state || player.mediaId !== room.playback.mediaId) return;
   pendingControl = {
     mediaId: player.mediaId,
+    sourceVersion: player.sourceVersion,
     position: state.position,
     playing: state.playing,
     rate: state.rate,
@@ -117,7 +129,11 @@ async function flushControl() {
   if (controlSending || !pendingControl || !room || !connected || !player.ready) return;
   const command = pendingControl;
   pendingControl = null;
-  if (command.mediaId !== room.playback.mediaId) return;
+  if (
+    command.mediaId !== room.playback.mediaId ||
+    command.sourceVersion !== (activeMedia()?.sourceVersion || 0)
+  )
+    return;
   controlSending = true;
   try {
     await roomApi('/control', command);
@@ -184,23 +200,22 @@ function recoverMissingRoom() {
   $('#roomBadge').textContent = 'КОМНАТА ЗАКРЫТА';
   $('#inviteButton span').textContent = 'Создать комнату';
   $('#inviteButton use').setAttribute('href', '#i-plus');
-  for (const id of ['#inviteDialog', '#addDialog']) {
+  for (const id of ['#inviteDialog', '#addDialog', '#rouletteDialog']) {
     if ($(id).open) $(id).close();
   }
   notice('Прежнее приглашение больше не действует. Для новой комнаты будет создана новая ссылка.');
   showRoomDialog(false);
   if (name) $('#nameInput').value = name;
 }
-function openAdd(type = 'file') {
+function openAdd(type = 'file', nominate = false) {
+  if (!$('#addDialog').open) addForRoulette = nominate;
   if (!room) {
     pendingSource = type;
     showRoomDialog(Boolean(routeId()));
     return;
   }
   selectedSource = type;
-  pageOptions = [];
-  resolvedPageUrl = '';
-  $('#pageChoices').hidden = true;
+
   $$('.add-tabs button').forEach((button) =>
     button.classList.toggle('selected', button.dataset.type === type),
   );
@@ -216,7 +231,7 @@ function openAdd(type = 'file') {
         : 'https://www.youtube.com/watch?v=…';
   $('#sourceHint').textContent =
     type === 'link'
-      ? 'Вставьте ссылку или код iframe: Kodik, YouTube, Vimeo, Twitch либо прямая видеоссылка. Для Kodik скопируйте код выбранной серии и озвучки. Для old.yummyani.me/catalog/item/… нажмите «Найти плееры» и выберите озвучку и серию.'
+      ? 'Вставьте ссылку или код iframe: Kodik, YouTube, Vimeo, Twitch либо прямая видеоссылка. Для Kodik скопируйте код выбранной серии и озвучки. Страницу old.yummyani.me/catalog/item/… можно добавить целиком. Плеер, озвучка и серия выбираются под видео во время просмотра.'
       : type === 'twitch'
         ? 'Канал или запись Twitch. Для прямых эфиров задержка у участников может различаться. Нужен HTTPS-домен.'
         : 'Подойдут обычные ссылки, Shorts и youtu.be. Некоторые видео запрещены для встраивания автором.';
@@ -261,7 +276,7 @@ function renderQueue() {
       icon(
         media.type === 'file'
           ? 'folder'
-          : ['remote', 'vimeo', 'kodik'].includes(media.type)
+          : ['remote', 'vimeo', 'kodik', 'cvh', 'alloha'].includes(media.type)
             ? 'link'
             : media.type,
       ),
@@ -269,9 +284,11 @@ function renderQueue() {
     const text = document.createElement('span');
     text.className = 'queue-text';
     const title = document.createElement('b');
-    title.textContent = media.title;
+    title.textContent = media.catalogTitle || media.title;
     const detail = document.createElement('small');
-    detail.textContent = `${active ? 'Сейчас смотрим · ' : ''}${media.type === 'file' ? `${(media.bytes / 1024 ** 2).toFixed(1)} МБ · файл` : media.type === 'youtube' ? 'YouTube' : media.type === 'kodik' ? 'Kodik' : media.type === 'vimeo' ? 'Vimeo' : media.type === 'remote' ? (media.format === 'hls' ? 'HLS · внешний поток' : 'Видео по ссылке') : media.live ? 'Twitch · прямой эфир' : 'Twitch · запись'}`;
+    detail.textContent = `${active ? 'Сейчас смотрим · ' : ''}${media.type === 'file' ? `${(media.bytes / 1024 ** 2).toFixed(1)} МБ · файл` : media.type === 'youtube' ? 'YouTube' : ['kodik', 'cvh', 'alloha'].includes(media.type) ? { kodik: 'Kodik', cvh: 'CVH', alloha: 'Alloha · вручную' }[media.type] : media.type === 'vimeo' ? 'Vimeo' : media.type === 'remote' ? (media.format === 'hls' ? 'HLS · внешний поток' : 'Видео по ссылке') : media.live ? 'Twitch · прямой эфир' : 'Twitch · запись'}`;
+    if (media.catalogUrl)
+      detail.textContent = `${active ? 'Сейчас смотрим · ' : ''}${media.playerLabel} · ${media.dubbing} · серия ${media.episode}`;
     text.append(title, detail);
     button.append(thumb, text);
     button.addEventListener('click', async () => {
@@ -360,6 +377,11 @@ function renderMessages() {
 async function receive(nextRoom) {
   if (room && nextRoom.id === room.id && nextRoom.revision < room.revision) return;
   const previousController = room?.controllerId;
+  if (nextRoom.roulette?.id && nextRoom.roulette.id !== room?.roulette?.id) {
+    forceNext = true;
+    pendingControl = null;
+    clearTimeout(controlTimer);
+  }
   room = nextRoom;
   roomUnavailable = false;
   $('#roomTitle').textContent = room.title;
@@ -379,7 +401,11 @@ async function receive(nextRoom) {
   }
   $('#permanentButton').hidden = !room.me.isHost || room.permanent;
   $('#syncStatus').textContent = 'Управляют все участники';
-  const media = room.queue.find((item) => item.id === room.playback.mediaId);
+  const media = activeMedia();
+  $('#syncStatus').textContent = media?.manual
+    ? 'Выбор общий · управление вручную'
+    : 'Управляют все участники';
+  renderSources(media);
   $('#playStatus').textContent = media ? media.title : 'Готовы к просмотру';
   $('#playerEmpty').hidden = Boolean(media);
   $('#mediaMount').hidden = !media;
@@ -387,7 +413,13 @@ async function receive(nextRoom) {
   renderQueue();
   renderPeople();
   renderMessages();
-  if (player.mediaId !== (media?.id || null)) {
+  roulette.update(room);
+  if (
+    player.mediaId !== (media?.id || null) ||
+    player.sourceVersion !== (media?.sourceVersion || 0)
+  ) {
+    pendingControl = null;
+    clearTimeout(controlTimer);
     const generation = ++mediaGeneration;
     await player.load(media, room.id);
     if (generation !== mediaGeneration) return;
@@ -554,6 +586,7 @@ $('#mediaForm').addEventListener('submit', async (event) => {
   event.preventDefault();
   $('#mediaSubmit').disabled = true;
   $('#uploadStatus').textContent = '';
+  let added;
   try {
     if (selectedSource === 'file') {
       const file = $('#fileInput').files[0];
@@ -561,7 +594,7 @@ $('#mediaForm').addEventListener('submit', async (event) => {
       const body = new FormData();
       body.append('video', file);
       $('#uploadProgress').hidden = false;
-      await new Promise((resolve, reject) => {
+      added = await new Promise((resolve, reject) => {
         const xhr = new XMLHttpRequest();
         upload = xhr;
         xhr.open('POST', `/api/rooms/${room.id}/upload`);
@@ -592,19 +625,12 @@ $('#mediaForm').addEventListener('submit', async (event) => {
       });
     } else {
       const input = $('#urlInput').value.trim();
-      if (input.startsWith('https://old.yummyani.me/catalog/item/') && resolvedPageUrl !== input) {
-        await findPagePlayers();
-        return;
-      }
-      const choice =
-        resolvedPageUrl === input
-          ? pageOptions.find((item) => String(item.id) === $('#pageEpisode').value)
-          : null;
-      if (resolvedPageUrl === input && !choice?.supported)
-        throw new Error('Выберите поддерживаемый плеер, озвучку и серию.');
-      await roomApi('/media', {
-        url: choice?.url || input,
-        title: $('#mediaTitleInput').value.trim() || choice?.title || '',
+      const catalog = input.startsWith('https://old.yummyani.me/catalog/item/');
+      if (catalog)
+        $('#uploadStatus').textContent = 'Добавляем страницу и загружаем список источников…';
+      added = await roomApi(catalog ? '/catalog' : '/media', {
+        url: input,
+        title: $('#mediaTitleInput').value.trim(),
       });
     }
     upload = null;
@@ -613,6 +639,15 @@ $('#mediaForm').addEventListener('submit', async (event) => {
     $('#fileLabel').textContent = 'Выберите видео с устройства';
     toast('Видео добавлено в очередь');
     await receive(await roomApi('', undefined, 'GET'));
+    if (addForRoulette) {
+      addForRoulette = false;
+      try {
+        await receive(await roomApi('/roulette/nominate', { mediaId: added.id }));
+      } catch (error) {
+        toast(`Видео в очереди. ${error.message}`);
+      }
+      roulette.open();
+    }
   } catch (error) {
     $('#uploadStatus').textContent = error.message;
   } finally {
@@ -782,73 +817,159 @@ function fillOptions(select, values) {
   }
   select.value = [...select.options].find((o) => !o.disabled)?.value || '';
 }
-function selectEpisodes() {
-  const items = pageOptions.filter(
-    (item) =>
-      item.supported &&
-      item.player === $('#pagePlayer').value &&
-      item.dubbing === $('#pageDubbing').value,
+function activeMedia() {
+  return room?.queue.find((item) => item.id === room.playback.mediaId);
+}
+function selectEpisodes(preferredEpisode = activeMedia()?.episode) {
+  const choices = sourceOptions.filter(
+    (o) =>
+      o.supported && o.player === $('#watchPlayer').value && o.dubbing === $('#watchDubbing').value,
   );
   fillOptions(
-    $('#pageEpisode'),
-    items.map((item) => [String(item.id), `Серия ${item.episode}`]),
+    $('#watchEpisode'),
+    choices.map((o) => [o.id, `Серия ${o.episode}`]),
   );
+  const preferred = choices.find((o) => o.episode === preferredEpisode);
+  if (preferred) $('#watchEpisode').value = preferred.id;
 }
 function selectDubbing() {
   const names = [
     ...new Set(
-      pageOptions
-        .filter((item) => item.supported && item.player === $('#pagePlayer').value)
-        .map((item) => item.dubbing),
+      sourceOptions
+        .filter((o) => o.supported && o.player === $('#watchPlayer').value)
+        .map((o) => o.dubbing),
     ),
   ];
   fillOptions(
-    $('#pageDubbing'),
+    $('#watchDubbing'),
     names.map((name) => [name, name]),
   );
+  if (names.includes(activeMedia()?.dubbing)) $('#watchDubbing').value = activeMedia().dubbing;
   selectEpisodes();
 }
-async function findPagePlayers() {
-  const input = $('#urlInput').value.trim();
-  $('#findPlayers').disabled = true;
-  $('#uploadStatus').textContent = 'Ищем серии и озвучки…';
-  pageOptions = [];
-  resolvedPageUrl = '';
-  $('#pageChoices').hidden = true;
+function showSourceSelection() {
+  const media = activeMedia();
+  if (!media?.catalogUrl || optionsLoading || optionsMediaId !== media.id) return;
+  const signature = `${media.id}:${media.sourceVersion || 0}`;
+  if (sourceSignature === signature) return;
+  sourceSignature = signature;
+  const names = [...new Set(sourceOptions.map((o) => o.player))];
+  fillOptions(
+    $('#watchPlayer'),
+    names.map((name) => {
+      const entries = sourceOptions.filter((o) => o.player === name && o.supported);
+      return [
+        name,
+        name +
+          (!entries.length ? ' — недоступен' : entries.every((o) => o.manual) ? ' — вручную' : ''),
+        !entries.length,
+      ];
+    }),
+  );
+  if (names.includes(media.playerLabel)) $('#watchPlayer').value = media.playerLabel;
+  selectDubbing();
+  if (sourceOptions.some((o) => o.id === media.variantId))
+    $('#watchEpisode').value = media.variantId;
+  $('#sourceStatus').textContent = media.manual
+    ? 'Этот плеер управляется вручную. Если он недоступен, переключитесь на Kodik или CVH.'
+    : 'Выбор меняется у всех. Для той же серии позиция сохраняется; после переключения нажмите Play.';
+}
+async function renderSources(media, refresh = false) {
+  $('#sourceControls').hidden = !media?.catalogUrl;
+  $('#externalControls').hidden = media?.type !== 'cvh';
+  if (!media?.catalogUrl) {
+    optionsMediaId = null;
+    optionsRequestId++;
+    sourceSignature = '';
+    return;
+  }
+  if (optionsMediaId === media.id && !refresh) {
+    showSourceSelection();
+    return;
+  }
+  optionsMediaId = media.id;
+  sourceOptions = [];
+  for (const select of $$('#sourceControls select')) select.replaceChildren();
+  optionsLoading = true;
+  sourceSignature = '';
+  const requestId = ++optionsRequestId;
+  $('#sourceStatus').textContent = 'Загружаем плееры и озвучки…';
+  $('#applySource').disabled = true;
+  for (const select of $$('#sourceControls select')) select.disabled = true;
   try {
-    const result = await roomApi('/resolve', { url: input });
-    if ($('#urlInput').value.trim() !== input) return;
-    pageOptions = result.options;
-    resolvedPageUrl = input;
-    const names = [...new Set(pageOptions.map((item) => item.player))];
-    fillOptions(
-      $('#pagePlayer'),
-      names.map((name) => {
-        const supported = pageOptions.some((item) => item.player === name && item.supported);
-        return [name, name + (supported ? '' : ' — пока не поддерживается'), !supported];
-      }),
-    );
-    selectDubbing();
-    $('#pageChoicesHint').textContent = `${result.title}. Выберите плеер, озвучку и серию.`;
-    $('#pageChoices').hidden = false;
-    $('#uploadStatus').textContent = pageOptions.some((item) => item.supported)
-      ? ''
-      : 'Поддерживаемые плееры не найдены. Попробуйте код iframe вручную.';
+    const result = await roomApi(`/media/${media.id}/options`, undefined, 'GET');
+    if (requestId !== optionsRequestId || activeMedia()?.id !== media.id) return;
+    sourceOptions = result.options;
+    optionsLoading = false;
+    showSourceSelection();
+  } catch (error) {
+    if (requestId === optionsRequestId) $('#sourceStatus').textContent = error.message;
   } finally {
-    $('#findPlayers').disabled = false;
+    if (requestId === optionsRequestId) {
+      optionsLoading = false;
+      $('#applySource').disabled = !sourceOptions.some((o) => o.supported);
+      for (const select of $$('#sourceControls select')) select.disabled = false;
+    }
   }
 }
-$('#findPlayers').addEventListener('click', () =>
-  findPagePlayers().catch((error) => {
-    $('#uploadStatus').textContent = error.message;
-  }),
-);
-$('#pagePlayer').addEventListener('change', selectDubbing);
-$('#pageDubbing').addEventListener('change', selectEpisodes);
-$('#urlInput').addEventListener('input', () => {
-  pageOptions = [];
-  resolvedPageUrl = '';
-  $('#pageChoices').hidden = true;
+$('#watchPlayer').addEventListener('change', selectDubbing);
+$('#watchDubbing').addEventListener('change', () => selectEpisodes());
+$('#refreshSources').addEventListener('click', () => renderSources(activeMedia(), true));
+$('#applySource').addEventListener('click', async () => {
+  const media = activeMedia(),
+    variantId = $('#watchEpisode').value;
+  if (!media?.catalogUrl || !variantId || variantId === media.variantId) return;
+  $('#applySource').disabled = true;
+  try {
+    await receive(
+      await roomApi(`/media/${media.id}/variant`, {
+        variantId,
+        sourceVersion: media.sourceVersion || 0,
+      }),
+    );
+    toast('Источник изменён для всей комнаты');
+  } catch (error) {
+    toast(error.message);
+  } finally {
+    $('#applySource').disabled = false;
+  }
+});
+for (const button of $$('[data-playback]'))
+  button.addEventListener('click', async () => {
+    const media = activeMedia();
+    if (media?.type !== 'cvh') return;
+    const action = button.dataset.playback;
+    const current = player.state() || room.playback;
+    const position = Math.max(
+      0,
+      Math.min(
+        864000,
+        current.position + (action === 'back' ? -10 : action === 'forward' ? 10 : 0),
+      ),
+    );
+    try {
+      forceNext = true;
+      await roomApi('/control', {
+        mediaId: media.id,
+        sourceVersion: media.sourceVersion || 0,
+        position,
+        rate: 1,
+        playing: action === 'play' ? true : action === 'pause' ? false : current.playing,
+      });
+      await receive(await roomApi('', undefined, 'GET'));
+    } catch (error) {
+      toast(error.message);
+    }
+  });
+
+const roulette = createRoulette({
+  request: async (path, data = {}) => receive(await roomApi(`/roulette/${path}`, data)),
+  add: () => openAdd('link', true),
+  error: toast,
+});
+$('#rouletteButton').addEventListener('click', () => {
+  if (!room) return toast('Сначала войдите в комнату');
+  roulette.open();
 });
 
 try {

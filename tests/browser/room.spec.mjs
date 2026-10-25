@@ -1,5 +1,6 @@
 import { test, expect } from '@playwright/test';
 import path from 'node:path';
+import { catalogUrl } from '../fixtures/catalog.mjs';
 
 async function createRoom(page, name = 'Аня') {
   await page.goto('/');
@@ -415,49 +416,191 @@ test('a host pins the room and leaves; the guest becomes host and can rejoin wit
   }
 });
 
-test('a catalog page offers player, dubbing and episode selection before adding to the queue', async ({
-  page,
+test('catalog choices change during viewing for everyone; CVH controls and compact layout work', async ({
+  browser,
 }) => {
-  await page.route('https://kodikplayer.com/**', (route) =>
-    route.fulfill({ path: path.resolve('tests/fixtures/kodik.html'), contentType: 'text/html' }),
-  );
-  await createRoom(page);
-  await page.route('**/api/rooms/*/resolve', (route) =>
-    route.fulfill({
-      json: {
-        title: 'Example',
-        options: [
-          {
-            id: 1,
-            player: 'Kodik',
-            dubbing: 'Voice A',
-            episode: '1',
-            title: 'Example · Voice A · 1',
-            supported: true,
-            url: 'https://kodikplayer.com/season/123/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa/720p?episode=1',
-          },
-          {
-            id: 2,
-            player: 'Kodik',
-            dubbing: 'Voice B',
-            episode: '2',
-            title: 'Example · Voice B · 2',
-            supported: true,
-            url: 'https://kodikplayer.com/season/123/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa/720p?episode=2',
-          },
-          { id: 3, player: 'Other', dubbing: 'Voice B', episode: '2', supported: false },
-        ],
-      },
-    }),
-  );
-  await page.locator('[data-source="link"]').click();
-  await page.locator('#urlInput').fill('https://old.yummyani.me/catalog/item/example');
-  await page.locator('#mediaSubmit').click();
-  await expect(page.locator('#pageChoices')).toBeVisible();
-  await expect(page.locator('#queueCount')).toHaveText('0');
-  await page.locator('#pageDubbing').selectOption('Voice B');
-  await expect(page.locator('#pageEpisode')).toHaveValue('2');
-  await page.locator('#mediaSubmit').click();
-  await expect(page.locator('#queueList')).toContainText('Example · Voice B · 2');
-  await expect(page.locator('#mediaMount iframe')).toHaveAttribute('src', /episode=2/);
+  const a = await browser.newContext(),
+    b = await browser.newContext();
+  const errors = [];
+  for (const context of [a, b]) {
+    await context.route('https://kodikplayer.com/**', (route) =>
+      route.fulfill({ path: path.resolve('tests/fixtures/kodik.html'), contentType: 'text/html' }),
+    );
+    await context.route('https://ru.yummyani.me/**', (route) =>
+      route.fulfill({ path: path.resolve('tests/fixtures/cvh.html'), contentType: 'text/html' }),
+    );
+    await context.route('https://alloha.yani.tv/**', (route) =>
+      route.fulfill({ status: 404, body: 'Unavailable', contentType: 'text/html' }),
+    );
+  }
+  try {
+    const host = await a.newPage(),
+      guest = await b.newPage();
+    for (const page of [host, guest]) page.on('pageerror', (error) => errors.push(error.message));
+    await createRoom(host);
+    await joinRoom(guest, host.url());
+    await guest.locator('[data-source="link"]').click();
+    await guest.locator('#urlInput').fill(catalogUrl);
+    await guest.locator('#mediaTitleInput').fill('Наш сериал');
+    await guest.locator('#mediaSubmit').click();
+    await expect(guest.locator('#addDialog')).not.toBeVisible();
+    await expect(host.locator('#watchPlayer')).toHaveValue('Kodik');
+    await expect(guest.locator('#watchDubbing')).toHaveValue('Voice A');
+    const apiPath = new URL(host.url()).pathname.replace('/room/', '/api/rooms/');
+    const state = async () => (await host.request.get(apiPath)).json();
+    const initial = await state();
+    await host.request.post(`${apiPath}/control`, {
+      headers: { origin: new URL(host.url()).origin },
+      data: { mediaId: initial.queue[0].id, position: 32, playing: false, rate: 1 },
+    });
+    await guest.locator('#watchDubbing').selectOption('Voice B');
+    await guest.locator('#applySource').click();
+    await expect(host.locator('#watchDubbing')).toHaveValue('Voice B');
+    await expect.poll(async () => (await state()).playback.position).toBe(32);
+    await expect(host.locator('#queueList')).toContainText('Наш сериал');
+    await guest.locator('#watchPlayer').selectOption('CVH');
+    await guest.locator('#applySource').click();
+    await expect(host.locator('#watchPlayer')).toHaveValue('CVH');
+    const frame = (page) =>
+      page.frames().find((f) => f.url().startsWith('https://ru.yummyani.me/'));
+    for (const page of [host, guest])
+      await expect(page.frameLocator('#mediaMount iframe').locator('#play')).toBeVisible();
+    await expect.poll(() => frame(host).evaluate(() => window.snapshot().time)).toBe(32);
+    await guest.locator('[data-playback="play"]').click();
+    for (const page of [host, guest])
+      await expect.poll(() => frame(page).evaluate(() => window.snapshot().playing)).toBe(true);
+    await host.locator('[data-playback="pause"]').click();
+    for (const page of [host, guest])
+      await expect.poll(() => frame(page).evaluate(() => window.snapshot().playing)).toBe(false);
+    await guest.locator('[data-playback="forward"]').click();
+    await expect
+      .poll(() => frame(host).evaluate(() => window.snapshot().time))
+      .toBeGreaterThanOrEqual(42);
+    await guest.locator('#watchEpisode').selectOption('4'.repeat(24));
+    await guest.locator('#applySource').click();
+    await expect(host.locator('#watchEpisode')).toHaveValue('4'.repeat(24));
+    await expect(host.frameLocator('#mediaMount iframe').locator('#play')).toBeVisible();
+    await expect.poll(() => frame(host).evaluate(() => window.snapshot().time)).toBe(0);
+    await host.evaluate(() =>
+      window.dispatchEvent(
+        new MessageEvent('message', {
+          origin: 'https://ru.yummyani.me',
+          source: window,
+          data: { key: 'player_play' },
+        }),
+      ),
+    );
+    await expect.poll(async () => (await state()).playback.playing).toBe(false);
+    for (const size of [
+      { width: 1366, height: 680 },
+      { width: 390, height: 844 },
+      { width: 844, height: 390 },
+    ]) {
+      await host.setViewportSize(size);
+      expect((await host.locator('#mediaMount').boundingBox()).height).toBeGreaterThan(30);
+      await expect(host.locator('[data-playback="play"]')).toBeInViewport();
+      if (size.width <= 850) await host.locator('[data-panel="chat"]').click();
+      await expect(host.locator('#chatInput')).toBeInViewport();
+      expect(
+        await host.evaluate(
+          () =>
+            document.documentElement.scrollHeight <= innerHeight &&
+            document.documentElement.scrollWidth <= innerWidth,
+        ),
+      ).toBe(true);
+      if (size.width <= 850) await host.locator('[data-panel="watch"]').click();
+      await host.screenshot({ path: `test-results/catalog-${size.width}.png` });
+    }
+    await guest.locator('#watchPlayer').selectOption('Alloha');
+    await guest.locator('#applySource').click();
+    await expect(host.locator('#playerNotice')).toContainText('вручную');
+    await expect(host.locator('#queueCount')).toHaveText('1');
+    await guest.locator('#watchPlayer').selectOption('Kodik');
+    await guest.locator('#applySource').click();
+    await expect(host.locator('#watchPlayer')).toHaveValue('Kodik');
+    await expect(host.frameLocator('#mediaMount iframe').locator('#play')).toBeVisible();
+    expect(errors).toEqual([]);
+  } finally {
+    await a.close();
+    await b.close();
+  }
+});
+
+test('members propose videos and see the same roulette elimination and winner', async ({
+  browser,
+}) => {
+  const a = await browser.newContext(),
+    b = await browser.newContext();
+  for (const context of [a, b]) {
+    await context.route('https://media.example.org/**', (route) =>
+      route.fulfill({
+        path: path.resolve('tests/fixtures/sample.webm'),
+        contentType: 'video/webm',
+      }),
+    );
+  }
+  try {
+    const host = await a.newPage(),
+      guest = await b.newPage();
+    await createRoom(host);
+    await joinRoom(guest, host.url());
+    const root = new URL(host.url()).pathname.replace('/room/', '/api/rooms/');
+    const headers = { origin: new URL(host.url()).origin };
+    for (let i = 1; i <= 3; i++) {
+      const response = await guest.request.post(`${root}/media`, {
+        headers,
+        data: { url: `https://media.example.org/${i}.mp4`, title: `Фильм ${i}` },
+      });
+      expect(response.status()).toBe(201);
+    }
+    await expect(host.locator('#queueCount')).toHaveText('3');
+    await host.locator('#rouletteButton').click();
+    await guest.locator('#rouletteButton').click();
+    await host.getByRole('button', { name: 'Предложить: Фильм 1', exact: true }).click();
+    await guest.getByRole('button', { name: 'Предложить: Фильм 2', exact: true }).click();
+    await guest.getByRole('button', { name: 'Предложить: Фильм 3', exact: true }).click();
+    await guest.locator('#rouletteAdd').click();
+    await guest.locator('#urlInput').fill('https://media.example.org/4.mp4');
+    await guest.locator('#mediaTitleInput').fill('Фильм 4');
+    await guest.locator('#mediaSubmit').click();
+    await expect(guest.locator('#rouletteDialog')).toBeVisible();
+    await expect(
+      guest.getByRole('button', { name: 'Отозвать: Фильм 4', exact: true }),
+    ).toBeVisible();
+    await expect(host.locator('#rouletteStatus')).toContainText('Предложено: 4');
+    await expect(guest.locator('#rouletteStart')).toBeHidden();
+    expect(
+      (await guest.request.post(`${root}/roulette/draw`, { headers, data: {} })).status(),
+    ).toBe(403);
+    await host.locator('#rouletteStart').click();
+    await expect(host.locator('#rouletteStage')).toBeVisible();
+    await expect(guest.locator('#rouletteStage')).toBeVisible();
+    const drawn = await (await host.request.get(root)).json();
+    expect(
+      (await host.request.delete(`${root}/media/${drawn.queue[0].id}`, { headers })).status(),
+    ).toBe(409);
+    await host.screenshot({ path: 'test-results/roulette-desktop.png' });
+    await guest.setViewportSize({ width: 390, height: 844 });
+    await guest.screenshot({ path: 'test-results/roulette-mobile.png' });
+    expect(
+      await guest.locator('#rouletteDialog').evaluate((el) => el.scrollWidth <= el.clientWidth),
+    ).toBe(true);
+    // A reload during the draw resumes its server timeline and cannot reroll the result.
+    await guest.reload();
+    await expect(guest.locator('#rouletteDialog')).toBeVisible();
+    await expect(host.locator('#rouletteStage')).toHaveClass(/finished/, { timeout: 15000 });
+    await expect(guest.locator('#rouletteStage')).toHaveClass(/finished/);
+    const winner = await host.locator('#rouletteStatus').textContent();
+    await expect(guest.locator('#rouletteStatus')).toHaveText(winner);
+    await expect(host.locator('#rouletteWheel .winner')).toHaveCount(1);
+    const final = await (await host.request.get(root)).json();
+    expect(final.playback.mediaId).toBe(drawn.roulette.order.at(-1));
+    expect(final.queue).toHaveLength(4);
+    await host.screenshot({ path: 'test-results/roulette-winner.png' });
+    await host.locator('#rouletteReset').click();
+    await expect(guest.locator('#rouletteStatus')).toContainText('Предложено: 0');
+  } finally {
+    await a.close();
+    await b.close();
+  }
 });
