@@ -17,6 +17,7 @@ for (const [address, prefix] of [
   ['192.0.0.0', 24],
   ['192.0.2.0', 24],
   ['192.168.0.0', 16],
+  ['192.88.99.0', 24],
   ['198.18.0.0', 15],
   ['198.51.100.0', 24],
   ['203.0.113.0', 24],
@@ -43,62 +44,75 @@ export function yummyPath(input) {
     throw new AppError(400, 'Поддерживаются страницы https://old.yummyani.me/catalog/item/…');
   return url.pathname;
 }
-async function readPage(pathname) {
-  let timer;
-  const addresses = await Promise.race([
-    lookup(hostname, { family: 4, all: true }),
-    new Promise((_, reject) => {
-      timer = setTimeout(() => reject(new AppError(504, 'YummyAnime не ответил.')), 8000);
-    }),
-  ]).finally(() => clearTimeout(timer));
-  if (!addresses.length || addresses.some(({ address }) => !isPublicIPv4(address)))
-    throw new AppError(502, 'Недопустимый сетевой адрес источника.');
-  // Fixed hostname, pinned public IPv4, no redirects, cookies or user headers.
-  return new Promise((resolve, reject) => {
-    const req = request(
-      {
-        hostname,
-        path: pathname,
-        family: 4,
-        method: 'GET',
-        lookup: (_host, options, callback) =>
-          options.all ? callback(null, [addresses[0]]) : callback(null, addresses[0].address, 4),
-        headers: { Accept: 'text/html, application/json', 'User-Agent': 'Syncplayer/0.1' },
-      },
-      (res) => {
-        if (res.statusCode !== 200) {
-          res.resume();
-          req.destroy(
-            new AppError(
-              502,
-              `YummyAnime ответил ${res.statusCode}; повторите позже или вставьте код плеера.`,
-            ),
-          );
-          return;
-        }
-        let size = 0;
-        const chunks = [];
-        res.on('data', (chunk) => {
-          size += chunk.length;
-          if (size > 2 * 1024 * 1024) {
-            req.destroy(new AppError(502, 'Ответ источника слишком большой.'));
+export function createYummyFetcher({
+  dnsLookup = lookup,
+  httpsRequest = request,
+  dnsTimeoutMs = 8000,
+  responseTimeoutMs = 12000,
+  maxResponseBytes = 2 * 1024 * 1024,
+} = {}) {
+  return async function readPage(pathname) {
+    if (
+      !/^\/catalog\/item\/[a-z0-9-]{1,180}\/?$/.test(pathname) &&
+      !/^\/api\/anime\/\d{1,10}\/videos$/.test(pathname)
+    )
+      throw new AppError(400, 'Недопустимый путь источника.');
+    let timer;
+    const addresses = await Promise.race([
+      dnsLookup(hostname, { family: 4, all: true }),
+      new Promise((_, reject) => {
+        timer = setTimeout(() => reject(new AppError(504, 'YummyAnime не ответил.')), dnsTimeoutMs);
+      }),
+    ]).finally(() => clearTimeout(timer));
+    if (!addresses.length || addresses.some(({ address }) => !isPublicIPv4(address)))
+      throw new AppError(502, 'Недопустимый сетевой адрес источника.');
+    // The validated public address is pinned for the HTTPS connection; redirects are never followed.
+    return new Promise((resolve, reject) => {
+      const req = httpsRequest(
+        {
+          hostname,
+          path: pathname,
+          family: 4,
+          method: 'GET',
+          lookup: (_host, options, callback) =>
+            options.all ? callback(null, [addresses[0]]) : callback(null, addresses[0].address, 4),
+          headers: { Accept: 'text/html, application/json', 'User-Agent': 'Syncplayer/0.1' },
+        },
+        (res) => {
+          if (res.statusCode !== 200) {
+            req.destroy(
+              new AppError(
+                502,
+                `YummyAnime ответил ${res.statusCode}; повторите позже или вставьте код плеера.`,
+              ),
+            );
             return;
           }
-          chunks.push(chunk);
-        });
-        res.on('error', reject);
-        res.on('end', () => resolve(Buffer.concat(chunks).toString('utf8')));
-      },
-    );
-    const timeout = setTimeout(
-      () => req.destroy(new AppError(504, 'YummyAnime не ответил вовремя.')),
-      12000,
-    );
-    req.on('error', reject);
-    req.on('close', () => clearTimeout(timeout));
-    req.end();
-  });
+          let size = 0;
+          const chunks = [];
+          res.on('data', (chunk) => {
+            size += chunk.length;
+            if (size > maxResponseBytes) {
+              req.destroy(new AppError(502, 'Ответ источника слишком большой.'));
+              return;
+            }
+            chunks.push(chunk);
+          });
+          res.on('error', reject);
+          res.on('end', () => resolve(Buffer.concat(chunks).toString('utf8')));
+        },
+      );
+      const timeout = setTimeout(
+        () => req.destroy(new AppError(504, 'YummyAnime не ответил вовремя.')),
+        responseTimeoutMs,
+      );
+      req.on('error', reject);
+      req.on('close', () => clearTimeout(timeout));
+      req.end();
+    });
+  };
 }
+const readPage = createYummyFetcher();
 export async function resolveYummy(input, read = readPage) {
   const pathname = yummyPath(input);
   const document = parse(await read(pathname));
@@ -185,7 +199,7 @@ export function catalogMedia(catalogUrl, result, choice) {
     episode: choice.episode,
   };
 }
-export function createYummyResolver() {
+export function createYummyResolver(resolve = resolveYummy) {
   const cache = new Map();
   let active = 0;
   return async (url) => {
@@ -196,7 +210,7 @@ export function createYummyResolver() {
       throw new AppError(429, 'Уже загружаются другие страницы. Повторите через несколько секунд.');
     active++;
     try {
-      const value = await resolveYummy(url);
+      const value = await resolve(url);
       if (cache.size >= 20) cache.delete(cache.keys().next().value);
       cache.set(key, { value, until: Date.now() + 60000 });
       return value;
