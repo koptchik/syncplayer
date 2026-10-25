@@ -62,8 +62,9 @@ function icon(name) {
   svg.append(use);
   return svg;
 }
-async function api(path, body, method = 'POST') {
+async function api(path, body, method = 'POST', signal) {
   const response = await fetch(path, {
+    signal,
     method,
     headers: body === undefined ? {} : { 'Content-Type': 'application/json' },
     ...(body === undefined ? {} : { body: JSON.stringify(body) }),
@@ -77,7 +78,8 @@ async function api(path, body, method = 'POST') {
   }
   return result;
 }
-const roomApi = (suffix, body, method) => api(`/api/rooms/${room.id}${suffix}`, body, method);
+const roomApi = (suffix, body, method, signal) =>
+  api(`/api/rooms/${room.id}${suffix}`, body, method, signal);
 const player = new PlayerController($('#mediaMount'), {
   changed() {
     if (room && connected) scheduleControl();
@@ -215,6 +217,7 @@ function openAdd(type = 'file', nominate = false) {
     return;
   }
   selectedSource = type;
+  resetDiagnosis();
 
   $$('.add-tabs button').forEach((button) =>
     button.classList.toggle('selected', button.dataset.type === type),
@@ -580,6 +583,53 @@ $('#dropzone').addEventListener('drop', (event) => {
   if (event.dataTransfer.files.length && !upload) {
     $('#fileInput').files = event.dataTransfer.files;
     $('#fileInput').dispatchEvent(new Event('change'));
+  }
+});
+let diagnosisRequest = 0;
+function resetDiagnosis() {
+  diagnosisRequest++;
+  $('#sourceDiagnosis').hidden = true;
+  $('#sourceDiagnosis').textContent = '';
+  $('#inspectSourceButton').disabled = false;
+}
+$('#urlInput').addEventListener('input', resetDiagnosis);
+$('#addDialog').addEventListener('close', resetDiagnosis);
+$('#inspectSourceButton').addEventListener('click', async () => {
+  if (!room) return;
+  const requestId = ++diagnosisRequest;
+  const roomId = room.id;
+  const url = $('#urlInput').value.trim();
+  const output = $('#sourceDiagnosis');
+  output.hidden = false;
+  if (!url) {
+    output.textContent = 'Вставьте ссылку или код iframe.';
+    return;
+  }
+  output.textContent = 'Проверяем формат ссылки…';
+  $('#inspectSourceButton').disabled = true;
+  try {
+    const result = await roomApi('/source/inspect', { url }, 'POST', AbortSignal.timeout(8000));
+    if (requestId !== diagnosisRequest || room?.id !== roomId) return;
+    const names = {
+      youtube: 'YouTube',
+      twitch: 'Twitch',
+      vimeo: 'Vimeo',
+      kodik: 'Kodik',
+      cvh: 'CVH',
+      alloha: 'Alloha',
+      yummy: 'YummyAnime',
+      hls: 'HLS',
+      video: 'Видео по ссылке',
+    };
+    output.textContent = `${result.supported ? names[result.provider] || 'Источник' : 'Не поддерживается'}. ${result.reason || ''}`;
+  } catch (error) {
+    if (requestId !== diagnosisRequest || room?.id !== roomId) return;
+    output.textContent =
+      error.status === 429
+        ? error.message
+        : 'Диагностика сейчас недоступна. Можно попробовать обычную кнопку «Добавить в очередь».';
+  } finally {
+    if (requestId === diagnosisRequest) $('#inspectSourceButton').disabled = false;
   }
 });
 $('#mediaForm').addEventListener('submit', async (event) => {

@@ -11,7 +11,8 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { ZodError } from 'zod';
 import { RoomStore, randomId } from './rooms.mjs';
-import { createYummyResolver, catalogMedia } from './yummy.mjs';
+import { createYummyResolver, catalogMedia, yummyPath } from './yummy.mjs';
+import { createSourceResolver, isCatalogSource } from './sources.mjs';
 import {
   AppError,
   createSchema,
@@ -19,8 +20,6 @@ import {
   chatSchema,
   controlSchema,
   idSchema,
-  parseSource,
-  sourceSchema,
 } from './validation.mjs';
 
 const publicDir = fileURLToPath(new URL('../../public/', import.meta.url));
@@ -151,6 +150,8 @@ export async function createApplication(config, { resolveCatalog = createYummyRe
   const mutationLimiter = limiter(60000, 60);
   const resolveLimiter = limiter(60000, 10);
   const resolvePage = resolveCatalog;
+  const sources = createSourceResolver(resolvePage);
+  const inspectLimiter = limiter(60000, 30);
   app.use('/api', (_req, res, next) => {
     res.set('Cache-Control', 'no-store');
     next();
@@ -208,19 +209,20 @@ export async function createApplication(config, { resolveCatalog = createYummyRe
       throw new AppError(400, 'Некорректная ссылка.');
     res.json(await resolvePage(req.body.url));
   });
-  app.post('/api/rooms/:id/catalog', resolveLimiter, async (req, res) => {
-    const input = sourceSchema.parse(req.body);
-    const result = await resolvePage(input.url);
+  app.post('/api/rooms/:id/source/inspect', inspectLimiter, (req, res) => {
+    res.json(sources.inspect(req.body));
+  });
+  async function addSource(req, res) {
+    const { media } = await sources.resolve(req.body);
     store.get(req.room.id);
     store.authenticate(req.room, sessionToken(req));
-    const choice =
-      result.options.find((o) => o.supported && o.url.startsWith('https://kodikplayer.com/')) ||
-      result.options.find((o) => o.supported);
-    if (!choice) throw new AppError(400, 'На странице нет поддерживаемых плееров.');
-    const media = catalogMedia(input.url, result, choice);
-    const item = store.add(req.room, { ...media, catalogTitle: input.title || media.catalogTitle });
+    const item = store.add(req.room, media);
     store.broadcast(req.room);
     res.status(201).json(item);
+  }
+  app.post('/api/rooms/:id/catalog', resolveLimiter, (req, res, next) => {
+    yummyPath(req.body?.url);
+    return addSource(req, res).catch(next);
   });
   app.get('/api/rooms/:id/media/:mediaId/options', resolveLimiter, async (req, res) => {
     const media = req.room.queue.find((m) => m.id === idSchema.parse(req.params.mediaId));
@@ -305,11 +307,15 @@ export async function createApplication(config, { resolveCatalog = createYummyRe
     store.broadcast(req.room);
     res.json({ ok: true });
   });
-  app.post('/api/rooms/:id/media', mutationLimiter, (req, res) => {
-    const item = store.add(req.room, parseSource(req.body));
-    store.broadcast(req.room);
-    res.status(201).json(item);
-  });
+  app.post(
+    '/api/rooms/:id/media',
+    mutationLimiter,
+    (req, res, next) => {
+      if (isCatalogSource(req.body?.url)) return resolveLimiter(req, res, next);
+      next();
+    },
+    addSource,
+  );
   app.post('/api/rooms/:id/select', mutationLimiter, (req, res) => {
     store.select(req.room, idSchema.parse(req.body?.mediaId), req.member);
     store.broadcast(req.room);

@@ -348,6 +348,10 @@
               placeholder="Например, аниме-вечер · серия 1"
           /></label>
           <p class="hint" id="sourceHint"></p>
+          <button type="button" id="inspectSourceButton" class="small-button">
+            Проверить ссылку
+          </button>
+          <p class="hint" id="sourceDiagnosis" role="status" aria-live="polite" hidden></p>
         </div>
         <button class="primary" id="mediaSubmit">Добавить в очередь</button
         ><progress id="uploadProgress" max="100" value="0" hidden></progress>

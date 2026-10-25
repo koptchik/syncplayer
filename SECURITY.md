@@ -45,3 +45,7 @@ Catalog variants are selected by a stable ID from the server-resolved list, neve
 ## Queue roulette
 
 Authenticated members may nominate up to three existing queue entries each; the host starts and resets rounds. The server uses crypto.randomInt with Fisher–Yates over distinct media IDs. It selects the winner paused and records the elimination order and timestamps before broadcasting. Playback, selection, variant changes, deletion and repeat draws are rejected during the animation. The animation presents an already decided result; it is not a gambling or adversarial-verifiability system. Artwork is limited to YouTube and validated static.yani.tv poster URLs, loaded by the viewer's browser without a backend image proxy.
+
+## Source inspection (A1)
+
+The authenticated, exact-Origin `POST /api/rooms/:id/source/inspect` endpoint is network-free, uses the existing input limits and permits 30 inspections per minute per IP. It returns format compatibility, not a playback or safety guarantee; rejected inputs do not echo the submitted URL/HTML. It does not resolve arbitrary DNS names or follow redirects. Existing media addition and the legacy catalog endpoint share a resolver facade; both catalog entry points share the existing catalog rate limiter and recheck membership after resolution. The original fixed-host Yummy network boundary is unchanged; deterministic transport-failure and rebinding coverage is scheduled separately for A2. Direct video retains the browser-fetch limitations documented above.

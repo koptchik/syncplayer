@@ -604,3 +604,44 @@ test('members propose videos and see the same roulette elimination and winner', 
     await b.close();
   }
 });
+
+test('source diagnostics explain support, ignore stale results and preserve ordinary adding on failure', async ({
+  page,
+}) => {
+  await page.route('https://media.example.org/sample.webm', (route) =>
+    route.fulfill({ path: path.resolve('tests/fixtures/sample.webm'), contentType: 'video/webm' }),
+  );
+  await createRoom(page);
+  await page.locator('[data-source="link"]').click();
+  await page.locator('#urlInput').fill('https://example.org/film');
+  await page.locator('#inspectSourceButton').click();
+  await expect(page.locator('#sourceDiagnosis')).toContainText('Не поддерживается');
+  await expect(page.locator('#queueCount')).toHaveText('0');
+  await page.locator('#urlInput').fill('https://youtu.be/aqz-KE-bpKQ');
+  await page.locator('#inspectSourceButton').click();
+  await expect(page.locator('#sourceDiagnosis')).toContainText('YouTube');
+  await expect(page.locator('#sourceDiagnosis')).toContainText('зависят от источника');
+  let release;
+  const gate = new Promise((resolve) => {
+    release = resolve;
+  });
+  await page.route('**/source/inspect', async (route) => {
+    await gate;
+    await route.fulfill({ json: { supported: true, provider: 'youtube', reason: 'Old result' } });
+  });
+  await page.locator('#inspectSourceButton').click();
+  await page.locator('#urlInput').fill('https://media.example.org/sample.webm');
+  release();
+  await expect(page.locator('#sourceDiagnosis')).toBeHidden();
+  await page.unroute('**/source/inspect');
+  await page.route('**/source/inspect', (route) =>
+    route.fulfill({ status: 503, json: { error: 'Unavailable' } }),
+  );
+  await page.locator('#inspectSourceButton').click();
+  await expect(page.locator('#sourceDiagnosis')).toContainText('Можно попробовать обычную кнопку');
+  await page.locator('#mediaSubmit').click();
+  await expect(page.locator('#queueCount')).toHaveText('1');
+  await expect
+    .poll(() => page.locator('video').evaluate((v) => v.readyState))
+    .toBeGreaterThanOrEqual(2);
+});
