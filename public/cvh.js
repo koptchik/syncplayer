@@ -1,7 +1,11 @@
 // The YummyAnime CVH wrapper exposes method commands and player_* events.
 export function createCvhAdapter(mount, media, { changed, ended, blocked, failed = () => {} }) {
   const local = media.type === 'lordfilm';
-  const nonce = local ? crypto.randomUUID() : null;
+  const nonce = local
+    ? [...crypto.getRandomValues(new Uint8Array(16))]
+        .map((value) => value.toString(16).padStart(2, '0'))
+        .join('')
+    : null;
   const params = local ? new URLSearchParams({ ...media.config, nonce }) : null;
   const url = local ? `/lordfilm-player.html?${params}` : media.url;
   const origin = local ? 'null' : new URL(media.url).origin;

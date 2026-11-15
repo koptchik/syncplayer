@@ -736,6 +736,10 @@ test('LordFilm CVH runs in an opaque sandbox and synchronizes across viewers', a
   const a = await browser.newContext(),
     b = await browser.newContext();
   for (const context of [a, b])
+    await context.addInitScript(() => {
+      Object.defineProperty(Crypto.prototype, 'randomUUID', { value: undefined });
+    });
+  for (const context of [a, b])
     await context.route('https://player.cdnvideohub.com/s2/stable/video-player.umd.js', (route) =>
       route.fulfill({
         path: path.resolve('tests/fixtures/lordfilm-component.js'),

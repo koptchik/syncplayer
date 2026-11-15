@@ -8,7 +8,7 @@
   if (
     !/^[0-9]{1,10}$/.test(title || '') ||
     !/^[0-9]{1,10}$/.test(publisher || '') ||
-    !/^[a-f0-9-]{36}$/.test(nonce || '')
+    !/^(?:[a-f0-9]{32}|[a-f0-9-]{36})$/.test(nonce || '')
   )
     return;
   const emit = (key, value) => parent.postMessage({ key, value, nonce }, '*');
