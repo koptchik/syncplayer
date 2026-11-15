@@ -13,6 +13,9 @@ import { ZodError } from 'zod';
 import { RoomStore, randomId } from './rooms.mjs';
 import { createYummyResolver, catalogMedia, yummyPath } from './yummy.mjs';
 import { createSourceResolver, isCatalogSource, isLordfilmSource } from './sources.mjs';
+import { createSearchService } from './search.mjs';
+import { createMetadataResolver } from './metadata.mjs';
+import { ARTWORK_HOSTS } from '../../public/artwork.js';
 import { proposeSchedule, actOnSchedule } from './schedule.mjs';
 import {
   AppError,
@@ -42,7 +45,12 @@ function sessionToken(req) {
 
 export async function createApplication(
   config,
-  { resolveCatalog = createYummyResolver(), resolveLordfilm } = {},
+  {
+    resolveCatalog = createYummyResolver(),
+    resolveLordfilm,
+    enrichMedia = createMetadataResolver(),
+    searchSources = createSearchService(),
+  } = {},
 ) {
   const app = express();
   const server = createServer(app);
@@ -77,8 +85,9 @@ export async function createApplication(
             'https://player.vimeo.com',
           ],
           styleSrc: ["'self'", "'unsafe-inline'"],
-          imgSrc: ["'self'", 'data:', 'https://i.ytimg.com', 'https://static.yani.tv'],
+          imgSrc: ["'self'", 'data:', ...ARTWORK_HOSTS.map((host) => `https://${host}`)],
           frameSrc: [
+            'https://rutube.ru',
             "'self'",
             'https://player.cdnvideohub.com',
             'https://ru.yummyani.me',
@@ -159,6 +168,7 @@ export async function createApplication(
   const resolvePage = resolveCatalog;
   const sources = createSourceResolver(resolvePage, resolveLordfilm);
   const inspectLimiter = limiter(60000, 30);
+  const searchLimiter = limiter(60000, 10);
   app.use('/api', (_req, res, next) => {
     res.set('Cache-Control', 'no-store');
     next();
@@ -216,11 +226,20 @@ export async function createApplication(
       throw new AppError(400, 'Некорректная ссылка.');
     res.json(await resolvePage(req.body.url));
   });
+  app.post('/api/rooms/:id/source/search', searchLimiter, async (req, res) => {
+    const result = await searchSources(req.body);
+    store.get(req.room.id);
+    store.authenticate(req.room, sessionToken(req));
+    res.json(result);
+  });
   app.post('/api/rooms/:id/source/inspect', inspectLimiter, (req, res) => {
     res.json(sources.inspect(req.body));
   });
   async function addSource(req, res) {
-    const { media } = await sources.resolve(req.body);
+    const resolved = await sources.resolve(req.body);
+    const media = await enrichMedia(resolved.media, {
+      preserveTitle: Boolean(req.body.title?.trim()),
+    });
     store.get(req.room.id);
     store.authenticate(req.room, sessionToken(req));
     const item = store.add(req.room, media);

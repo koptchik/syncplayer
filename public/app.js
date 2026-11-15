@@ -1,6 +1,8 @@
 import { PlayerController } from './players.js';
 import { createRoulette } from './roulette.js';
 import { createSchedule } from './schedule.js';
+import { mediaArtwork } from './artwork.js';
+import { createSourceSearch } from './search.js';
 const $ = (selector) => document.querySelector(selector);
 const $$ = (selector) => [...document.querySelectorAll(selector)];
 const routeId = () => location.pathname.match(/^\/room\/([a-f0-9]{32})\/?$/)?.[1];
@@ -115,7 +117,7 @@ function scheduleControl(checkpoint = false) {
   if (!room || !connected || !player.ready || room.roulette?.endsAt > Date.now() + skew) return;
   if (checkpoint && pendingControl && !pendingControl.checkpoint) return;
   const state = player.state();
-  if (!state || player.mediaId !== room.playback.mediaId) return;
+  if (!state || state.advertising || player.mediaId !== room.playback.mediaId) return;
   pendingControl = {
     mediaId: player.mediaId,
     sourceVersion: player.sourceVersion,
@@ -221,13 +223,15 @@ function openAdd(type = 'file', nominate = false) {
   }
   selectedSource = type;
   resetDiagnosis();
+  $('#searchFields').hidden = type !== 'search';
+  $('#mediaForm').hidden = type === 'search';
 
   $$('.add-tabs button').forEach((button) =>
     button.classList.toggle('selected', button.dataset.type === type),
   );
   $('#fileFields').hidden = type !== 'file';
   $('#urlFields').hidden = type === 'file';
-  $('#urlInput').required = type !== 'file';
+  $('#urlInput').required = !['file', 'search'].includes(type);
   $('#fileInput').required = type === 'file';
   $('#urlInput').placeholder =
     type === 'twitch'
@@ -237,7 +241,7 @@ function openAdd(type = 'file', nominate = false) {
         : 'https://www.youtube.com/watch?v=…';
   $('#sourceHint').textContent =
     type === 'link'
-      ? 'Вставьте ссылку или код iframe: Kodik, YouTube, Vimeo, Twitch либо прямая видеоссылка. Для Kodik скопируйте код выбранной серии и озвучки. Страницы old.yummyani.me/catalog/item/… и 8.lordfilms.mobile/<номер>/ можно добавить целиком. Плеер, озвучка и серия выбираются под видео во время просмотра.'
+      ? 'Вставьте ссылку или код iframe: Kodik, YouTube, Rutube, Vimeo, Twitch либо прямая видеоссылка. Для Kodik скопируйте код выбранной серии и озвучки. Страницы old.yummyani.me/catalog/item/… и 8.lordfilms.mobile/<номер>/ можно добавить целиком. Плеер, озвучка и серия выбираются под видео во время просмотра.'
       : type === 'twitch'
         ? 'Канал или запись Twitch. Для прямых эфиров задержка у участников может различаться. Нужен HTTPS-домен.'
         : 'Подойдут обычные ссылки, Shorts и youtu.be. Некоторые видео запрещены для встраивания автором.';
@@ -282,17 +286,27 @@ function renderQueue() {
       icon(
         media.type === 'file'
           ? 'folder'
-          : ['remote', 'vimeo', 'kodik', 'cvh', 'lordfilm', 'alloha'].includes(media.type)
+          : ['remote', 'vimeo', 'kodik', 'cvh', 'lordfilm', 'alloha', 'rutube'].includes(media.type)
             ? 'link'
             : media.type,
       ),
     );
+    const poster = mediaArtwork(media);
+    if (poster) {
+      const image = document.createElement('img');
+      image.src = poster;
+      image.alt = '';
+      image.loading = 'lazy';
+      image.referrerPolicy = 'no-referrer';
+      image.addEventListener('error', () => image.remove(), { once: true });
+      thumb.append(image);
+    }
     const text = document.createElement('span');
     text.className = 'queue-text';
     const title = document.createElement('b');
     title.textContent = media.catalogTitle || media.title;
     const detail = document.createElement('small');
-    detail.textContent = `${active ? 'Сейчас смотрим · ' : ''}${media.type === 'file' ? `${(media.bytes / 1024 ** 2).toFixed(1)} МБ · файл` : media.type === 'youtube' ? 'YouTube' : ['kodik', 'cvh', 'lordfilm', 'alloha'].includes(media.type) ? { kodik: 'Kodik', cvh: 'CVH', lordfilm: 'LordFilm · CVH', alloha: 'Alloha · вручную' }[media.type] : media.type === 'vimeo' ? 'Vimeo' : media.type === 'remote' ? (media.format === 'hls' ? 'HLS · внешний поток' : 'Видео по ссылке') : media.live ? 'Twitch · прямой эфир' : 'Twitch · запись'}`;
+    detail.textContent = `${active ? 'Сейчас смотрим · ' : ''}${media.type === 'file' ? `${(media.bytes / 1024 ** 2).toFixed(1)} МБ · файл` : media.type === 'youtube' ? 'YouTube' : ['kodik', 'cvh', 'lordfilm', 'alloha', 'rutube'].includes(media.type) ? { kodik: 'Kodik', cvh: 'CVH', lordfilm: 'LordFilm · CVH', rutube: 'Rutube', alloha: 'Alloha · вручную' }[media.type] : media.type === 'vimeo' ? 'Vimeo' : media.type === 'remote' ? (media.format === 'hls' ? 'HLS · внешний поток' : 'Видео по ссылке') : media.live ? 'Twitch · прямой эфир' : 'Twitch · запись'}`;
     if (media.catalogUrl)
       detail.textContent = `${active ? 'Сейчас смотрим · ' : ''}${media.playerLabel} · ${media.dubbing} · серия ${media.episode}`;
     text.append(title, detail);
@@ -617,6 +631,7 @@ $('#inspectSourceButton').addEventListener('click', async () => {
     if (requestId !== diagnosisRequest || room?.id !== roomId) return;
     const names = {
       youtube: 'YouTube',
+      rutube: 'Rutube',
       twitch: 'Twitch',
       vimeo: 'Vimeo',
       kodik: 'Kodik',
@@ -689,21 +704,7 @@ $('#mediaForm').addEventListener('submit', async (event) => {
         title: $('#mediaTitleInput').value.trim(),
       });
     }
-    upload = null;
-    $('#addDialog').close();
-    $('#mediaForm').reset();
-    $('#fileLabel').textContent = 'Выберите видео с устройства';
-    toast('Видео добавлено в очередь');
-    await receive(await roomApi('', undefined, 'GET'));
-    if (addForRoulette) {
-      addForRoulette = false;
-      try {
-        await receive(await roomApi('/roulette/nominate', { mediaId: added.id }));
-      } catch (error) {
-        toast(`Видео в очереди. ${error.message}`);
-      }
-      roulette.open();
-    }
+    await finishAddedMedia(added);
   } catch (error) {
     $('#uploadStatus').textContent = error.message;
   } finally {
@@ -714,6 +715,24 @@ $('#mediaForm').addEventListener('submit', async (event) => {
 $('#addDialog').addEventListener('close', () => {
   if (upload) upload.abort();
 });
+async function finishAddedMedia(added) {
+  upload = null;
+  $('#addDialog').close();
+  $('#mediaForm').reset();
+  $('#fileLabel').textContent = 'Выберите видео с устройства';
+  toast('Видео добавлено в очередь');
+  await receive(await roomApi('', undefined, 'GET'));
+  if (addForRoulette) {
+    addForRoulette = false;
+    try {
+      await receive(await roomApi('/roulette/nominate', { mediaId: added.id }));
+    } catch (error) {
+      toast(`Видео в очереди. ${error.message}`);
+    }
+    roulette.open();
+  }
+}
+
 async function sendMessage(text) {
   if (!room) {
     toast('Сначала создайте комнату или присоединитесь к друзьям.');
@@ -932,7 +951,7 @@ function showSourceSelection() {
 }
 async function renderSources(media, refresh = false) {
   $('#sourceControls').hidden = !media?.catalogUrl;
-  $('#externalControls').hidden = !['cvh', 'lordfilm'].includes(media?.type);
+  $('#externalControls').hidden = !['cvh', 'lordfilm', 'rutube'].includes(media?.type);
   $('#sourcePageLink').hidden = !media?.sourcePage;
   if (media?.sourcePage) $('#sourcePageLink').href = media.sourcePage;
   else $('#sourcePageLink').removeAttribute('href');
@@ -996,7 +1015,7 @@ $('#applySource').addEventListener('click', async () => {
 for (const button of $$('[data-playback]'))
   button.addEventListener('click', async () => {
     const media = activeMedia();
-    if (!['cvh', 'lordfilm'].includes(media?.type)) return;
+    if (!['cvh', 'lordfilm', 'rutube'].includes(media?.type)) return;
     const action = button.dataset.playback;
     const current = player.state() || room.playback;
     const position = Math.max(
@@ -1029,6 +1048,14 @@ const roulette = createRoulette({
 $('#rouletteButton').addEventListener('click', () => {
   if (!room) return toast('Сначала войдите в комнату');
   roulette.open();
+});
+
+createSourceSearch({
+  request: (data) => roomApi('/source/search', data, 'POST', AbortSignal.timeout(12000)),
+  add: async (url) => {
+    const added = await roomApi('/media', { url });
+    await finishAddedMedia(added);
+  },
 });
 
 const schedule = createSchedule({

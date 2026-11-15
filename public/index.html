@@ -321,10 +321,40 @@
       ><span class="eyebrow">ПРОГРАММА ВЕЧЕРА</span>
       <h2>Добавить видео</h2>
       <div class="add-tabs">
-        <button data-type="file" class="selected">Файл</button
+        <button data-type="search">Поиск</button
+        ><button data-type="file" class="selected">Файл</button
         ><button data-type="youtube">YouTube</button><button data-type="twitch">Twitch</button
         ><button data-type="link">Ссылка / код плеера</button>
       </div>
+      <section id="searchFields" hidden>
+        <p class="hint">
+          Поиск по названию на Rutube, YummyAnime и LordFilm. Добавляйте найденные варианты в
+          очередь.
+        </p>
+        <form id="catalogSearchForm">
+          <label
+            >Название фильма, аниме или видео<input
+              id="catalogSearchQuery"
+              required
+              minlength="2"
+              maxlength="100"
+              placeholder="Например, Парни со стволами"
+          /></label>
+          <div class="search-fields-row">
+            <label
+              >Где искать<select id="catalogSearchProvider">
+                <option value="all">Все три сайта</option>
+                <option value="rutube">Rutube</option>
+                <option value="yummy">YummyAnime</option>
+                <option value="lordfilm">LordFilm</option>
+              </select></label
+            ><button id="searchSubmit" class="primary">Найти</button>
+          </div>
+        </form>
+        <p id="searchStatus" class="hint" role="status" aria-live="polite"></p>
+        <div id="searchResults" class="search-results"></div>
+        <div id="externalSearchLinks" class="external-search-links"></div>
+      </section>
       <form id="mediaForm">
         <div id="fileFields">
           <label class="dropzone" id="dropzone"
@@ -439,8 +469,8 @@
       <ol class="help-list">
         <li><strong>Создайте комнату.</strong> Выберите имя и отправьте друзьям ссылку.</li>
         <li>
-          <strong>Добавьте видео.</strong> Загрузите файл или вставьте ссылку YouTube, Twitch, Vimeo
-          или прямую ссылку на видео. Добавлять могут все участники.
+          <strong>Добавьте видео.</strong> Загрузите файл или вставьте ссылку YouTube, Rutube,
+          Twitch, Vimeo или прямую ссылку на видео. Добавлять могут все участники.
         </li>
         <li>
           <strong>Нажмите Play.</strong> Каждый участник управляет паузой, скоростью и перемоткой.

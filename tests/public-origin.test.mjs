@@ -7,7 +7,7 @@ import { once } from 'node:events';
 import { request } from 'node:http';
 import WebSocket from 'ws';
 import { configuration } from '../src/server/config.mjs';
-import { createApplication } from '../src/server/app.mjs';
+import { createApplication } from './helpers/application.mjs';
 
 const publicOrigin = 'https://stream.koptchik.duckdns.org';
 

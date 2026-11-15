@@ -1,5 +1,6 @@
 import { createKodikAdapter } from './kodik.js';
 import { createCvhAdapter } from './cvh.js';
+import { createRutubeAdapter } from './rutube.js';
 
 const scripts = new Map();
 function loadScript(url, ready) {
@@ -99,10 +100,13 @@ export class PlayerController {
           'Alloha управляется вручную: пауза и перемотка у каждого свои. Если плеер недоступен или показывает ошибку, выберите Kodik или CVH.',
         );
         return;
-      } else if (media.type === 'kodik' || ['cvh', 'lordfilm'].includes(media.type)) {
-        const createAdapter = ['cvh', 'lordfilm'].includes(media.type)
-          ? createCvhAdapter
-          : createKodikAdapter;
+      } else if (media.type === 'kodik' || ['cvh', 'lordfilm', 'rutube'].includes(media.type)) {
+        const createAdapter =
+          media.type === 'rutube'
+            ? createRutubeAdapter
+            : ['cvh', 'lordfilm'].includes(media.type)
+              ? createCvhAdapter
+              : createKodikAdapter;
         this.adapter = createAdapter(this.mount, media, {
           changed: (kind) => {
             if (current()) this.event(kind);

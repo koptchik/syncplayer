@@ -175,7 +175,7 @@ export class RoomStore {
     room.playback = {
       mediaId: data.mediaId,
       playing: data.playing,
-      rate: ['twitch', 'cvh', 'lordfilm'].includes(media?.type) ? 1 : data.rate,
+      rate: ['twitch', 'cvh', 'lordfilm', 'rutube'].includes(media?.type) ? 1 : data.rate,
       position: media?.live ? 0 : data.position,
       updatedAt: Date.now(),
     };

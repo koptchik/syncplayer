@@ -5,7 +5,7 @@ import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { inspectSource, createSourceResolver } from '../src/server/sources.mjs';
 import { parseSource, AppError } from '../src/server/validation.mjs';
-import { createApplication } from '../src/server/app.mjs';
+import { createApplication } from './helpers/application.mjs';
 import { configuration } from '../src/server/config.mjs';
 import { catalog, catalogUrl } from './fixtures/catalog.mjs';
 

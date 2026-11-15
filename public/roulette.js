@@ -1,3 +1,4 @@
+import { mediaArtwork } from './artwork.js';
 const $ = (id) => document.getElementById(id);
 function card(media) {
   const node = document.createElement('div');
@@ -10,19 +11,7 @@ function card(media) {
   const monogram = document.createElement('span');
   monogram.textContent = title.slice(0, 2).toUpperCase();
   art.append(monogram);
-  let poster =
-    media.type === 'youtube'
-      ? `https://i.ytimg.com/vi/${media.providerId}/hqdefault.jpg`
-      : media.poster;
-  if (poster) {
-    try {
-      const url = new URL(poster);
-      if (url.protocol !== 'https:' || !['i.ytimg.com', 'static.yani.tv'].includes(url.hostname))
-        poster = null;
-    } catch {
-      poster = null;
-    }
-  }
+  const poster = mediaArtwork(media);
   if (poster) {
     const image = document.createElement('img');
     image.src = poster;

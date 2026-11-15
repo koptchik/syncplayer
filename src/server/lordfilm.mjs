@@ -1,5 +1,6 @@
 import { parse } from 'parse5';
 import { AppError } from './validation.mjs';
+import { safeArtwork } from '../../public/artwork.js';
 import { createFixedHostFetcher } from './fixed-fetch.mjs';
 export function lordfilmPath(input) {
   let url;
@@ -29,10 +30,17 @@ const readPage = createFixedHostFetcher({
 export async function resolveLordfilm(input, read = readPage) {
   const path = lordfilmPath(input);
   const document = parse(await read(path));
-  let title, config;
+  let title, config, poster;
   const text = (node) => node.value || (node.childNodes || []).map(text).join('');
   const walk = (node) => {
     const attr = (name) => node.attrs?.find((a) => a.name === name)?.value;
+    if (node.tagName === 'meta' && attr('property') === 'og:image') {
+      try {
+        poster = safeArtwork(new URL(attr('content'), 'https://8.lordfilms.mobile').href);
+      } catch {
+        /* No trusted poster. */
+      }
+    }
     if (node.tagName === 'h1') title = text(node).trim().slice(0, 120);
     if (!title && node.tagName === 'title') title = text(node).trim().slice(0, 120);
     if (
@@ -51,6 +59,7 @@ export async function resolveLordfilm(input, read = readPage) {
       'На странице не найден поддерживаемый CVH-плеер. Можно вставить поддерживаемый iframe или прямую видеоссылку.',
     );
   return {
+    ...(poster ? { poster } : {}),
     type: 'lordfilm',
     title: title || `LordFilm · ${path.split('/')[1]}`,
     sourcePage: `https://8.lordfilms.mobile${path}`,

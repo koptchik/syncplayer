@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
-import { createApplication } from '../src/server/app.mjs';
+import { createApplication } from './helpers/application.mjs';
 import { configuration } from '../src/server/config.mjs';
 
 test('members propose and vote; host confirms and starts queued films or a roulette winner; schedule persists', async () => {

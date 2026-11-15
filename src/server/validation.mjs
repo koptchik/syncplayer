@@ -61,6 +61,19 @@ export function parseSource(input) {
     throw new AppError(400, 'Нужна обычная ссылка без пароля и нестандартного порта.');
   }
   const host = u.hostname.toLowerCase().replace(/\.$/, '');
+  if (['rutube.ru', 'www.rutube.ru'].includes(host)) {
+    const match = u.pathname.match(/^\/(?:video|play\/embed)\/([a-f0-9]{32})\/?$/i);
+    if (u.protocol !== 'https:' || !match)
+      throw new AppError(400, 'Для Rutube нужна HTTPS-ссылка на видео или iframe с 32-значным ID.');
+    const providerId = match[1].toLowerCase();
+    return {
+      type: 'rutube',
+      providerId,
+      url: `https://rutube.ru/play/embed/${providerId}/`,
+      title: title || `Rutube · ${providerId}`,
+      live: false,
+    };
+  }
   if (host === 'ru.yummyani.me' && u.protocol === 'https:' && u.pathname === '/iframeCVH.html') {
     const anime = u.searchParams.get('anime_id'),
       episode = u.searchParams.get('episode'),
@@ -210,6 +223,6 @@ export function parseSource(input) {
   }
   throw new AppError(
     400,
-    'Поддерживаются YouTube, Twitch, Vimeo, Kodik (kodikplayer.com), их iframe-коды и прямые HTTPS-видеоссылки. Для другого сайта нужен поддерживаемый код плеера; произвольные страницы пока не разбираются.',
+    'Поддерживаются YouTube, Rutube, Twitch, Vimeo, Kodik (kodikplayer.com), их iframe-коды и прямые HTTPS-видеоссылки. Для другого сайта нужен поддерживаемый код плеера; произвольные страницы пока не разбираются.',
   );
 }

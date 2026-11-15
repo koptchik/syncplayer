@@ -7,7 +7,7 @@ import { once } from 'node:events';
 import { get as httpGet } from 'node:http';
 import WebSocket from 'ws';
 import { configuration } from '../src/server/config.mjs';
-import { createApplication } from '../src/server/app.mjs';
+import { createApplication } from './helpers/application.mjs';
 import { parseSource, controlSchema } from '../src/server/validation.mjs';
 
 let application, base, dataDir, host, guest, roomId;

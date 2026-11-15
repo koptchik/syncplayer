@@ -1,22 +1,22 @@
 # SyncPlayer Codex Progress
 
-- Last updated (UTC): 2026-11-15T07:53:38+00:00
-- Current stage/substage: User-requested increment — meeting proposals/votes and LordFilm CVH page adapter.
-- Status: deployed
-- Branch / commit SHA: feat/watch-schedule-lordfilm / be5662beb85f893b175a96623651eb99672f76d3; merged fast-forward. LAN nonce compatibility fix: cfb69acf2be3a47c15618540fd140cfef3fbcfb4 on main.
-- Production deployed SHA: cfb69acf2be3a47c15618540fd140cfef3fbcfb4; exact public asset hashes match tested local files.
+- Last updated (UTC): 2026-11-15T08:15:36+00:00
+- Current stage/substage: User-requested increment — Rutube playback, automatic metadata/artwork and multi-source title search.
+- Status: in_progress
+- Branch / commit SHA: feat/rutube-metadata-search; base 2b1042ea434038839531bf6c83a1958ee3671bbe.
+- Production deployed SHA: cfb69acf2be3a47c15618540fd140cfef3fbcfb4; confirmed during preflight.
 - Production URL: https://stream.koptchik.duckdns.org
-- Implemented & acceptance criteria met: Members propose future times and queued films/roulette; bounded availability voting; host confirmation, binding of completed roulette results and manual start paused; local time-zone display; permanent-room persistence; mobile dialog and next-meeting banner. Fixed-host LordFilm parser extracts title and numeric CVH identifiers; opaque sandbox relay supports shared play/pause/seek at rate 1. Added separate join rate bucket for full rooms.
-- Commands/tests and outcomes: npm run check PASS (33 server/security tests); full npm run test:e2e PASS (15 Chromium scenarios); final nonce/LAN compatibility fix passed npm run check and the two affected schedule/LordFilm browser tests. No dependency changes.
-- Deployment command and result: `/opt/syncplayer/deploy.sh cfb69acf2be3a47c15618540fd140cfef3fbcfb4` healthy; prior feature release be5662b also deployed successfully. No configuration edits or rollback required.
-- Smoke test results: Final public health/assets/UI PASS; public multipart upload 201; two independent public clients proposed, voted, confirmed and started a meeting, then played/sought/paused a real fixture. Real LordFilm page imported with expected CVH identifiers and opaque sandbox mounted. Smoke media/queue entries removed; sessions revoked; empty temporary room and meeting expire normally. Real CVH metadata loaded in a separate local live check but the movie stream failed with provider access/CORS; alternate Alloha returned 404.
-- Known issues / blockers: NPM upload issue resolved: CT101 rootfs was full (16 GiB); user expanded it to 24 GiB, confirmed 7.6 GiB free, and repeated public upload/playback smoke passed. No current app deployment blocker. LordFilm stream availability remains dependent on provider access/CORS; error and original-page link are shown. Stage B yt-dlp isolation blocker is unchanged; this fixed-host adapter does not activate yt-dlp. No external notifications or automatic scheduled playback.
+- Implemented & acceptance criteria met: Canonical Rutube URL/iframe imports and official iframe play/pause/seek adapter (rate 1), source/window checks and ad-time filtering. Best-effort Rutube/YouTube/Vimeo metadata with custom-title preservation, bounded network/cache and artwork in queue/roulette; LordFilm page artwork. Unified live Rutube/YummyAnime/LordFilm title search with per-source failures and add-to-queue; explicit external search links for YouTube/Vimeo/Twitch. Existing rooms, schedule and uploads retained.
+- Commands/tests and outcomes: npm run check PASS (37 server/security tests), npm run test:e2e PASS (16 Chromium scenarios). Real Rutube sample metadata yielded its title/artwork and real iframe played, emitting advancing currentTime. Real title search returned all three sources successfully. No new dependencies.
+- Deployment command and result: pending; deploy the tested SHA through existing deploy.sh.
+- Smoke test results: production pending. Local real Rutube sample played successfully; deterministic browsers verified two-client synchronization, search add, image display and ad/spoof isolation.
+- Known issues / blockers: No current deployment blocker. Search is first-page/bounded results and source availability/embedding restrictions still apply. Auto metadata falls back for unavailable services; file/Twitch/Kodik names may remain unchanged. Stage B yt-dlp remains off and requires separate isolation work. Roadmap file remains local/untracked and unmodified.
 - Remaining tasks for next session (prioritized, max 5):
-  1. Await user feedback on scheduling workflow and provider availability; if adding mirrors/players, implement exact allowlists and deterministic tests.
-  2. For Stage B, provision an isolated worker/egress policy before enabling yt-dlp; do not infer that the new page adapter resolves that blocker.
-- Next single shippable increment: user-requested schedule/LordFilm release complete and deployed; await further user direction. Stage B still requires an isolated worker.
+  1. Complete exact-SHA deploy and production search/metadata/playback smoke.
+  2. Await feedback; extend sources only with explicit host policies and tested adapters.
+- Next single shippable increment: finish this user-requested deployment and stop.
 - Quota observed: unavailable; no percentage inferred.
 
 ## Architecture and scope
 
-RoomStore snapshots include bounded schedule entries, UTC instants and author time zones. Dedicated schedule actions enforce membership, Origin, roles and per-event revisions. Existing fixed-host HTTPS transport is shared by Yummy and LordFilm without user-supplied hostnames; redirects/private DNS are rejected and body/time limits retained. The LordFilm component runs in an opaque sandbox without room storage/cookies; frame-window/origin/nonce checks bind relay messages. Third-party network/media restrictions are reported, not bypassed. No service configuration changes required.
+Known-source parser and PlayerController gain a Rutube adapter using its public iframe protocol. Bounded metadata and search services reuse fixed-host HTTPS transport and safe artwork URLs. New authenticated search API uses existing room sessions/Origin rules. Source additions recheck membership after metadata resolution. Metadata and search I/O are explicitly injected into automated tests; production uses only real bounded adapters. No subprocess, arbitrary site fetcher, media proxy or DRM/login bypass was added.

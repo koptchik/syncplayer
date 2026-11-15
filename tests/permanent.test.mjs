@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import { mkdtemp, rm, readFile, utimes, stat } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
-import { createApplication } from '../src/server/app.mjs';
+import { createApplication } from './helpers/application.mjs';
 import { configuration } from '../src/server/config.mjs';
 
 test('one permanent room survives restart with sessions, queue, chat and protected uploads; leaving revokes membership', async () => {

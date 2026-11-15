@@ -809,3 +809,91 @@ test('LordFilm CVH runs in an opaque sandbox and synchronizes across viewers', a
     await b.close();
   }
 });
+
+test('Rutube search imports metadata and synchronizes iframe playback without trusting unrelated messages or ad time', async ({
+  browser,
+}) => {
+  const a = await browser.newContext(),
+    b = await browser.newContext();
+  for (const context of [a, b]) {
+    await context.route('https://rutube.ru/play/embed/**', (route) =>
+      route.fulfill({ path: path.resolve('tests/fixtures/rutube.html'), contentType: 'text/html' }),
+    );
+    await context.route('https://pic.rtbcdn.ru/**', (route) =>
+      route.fulfill({
+        contentType: 'image/svg+xml',
+        body: '<svg xmlns="http://www.w3.org/2000/svg" width="100" height="150"><rect width="100" height="150" fill="#8a60bb"/></svg>',
+      }),
+    );
+  }
+  try {
+    const host = await a.newPage(),
+      guest = await b.newPage();
+    await createRoom(host);
+    await joinRoom(guest, host.url());
+    await guest.locator('#addButton').click();
+    await guest.locator('[data-type="search"]').click();
+    await guest.locator('#catalogSearchQuery').fill('Парни со стволами');
+    await guest.locator('#searchSubmit').click();
+    await expect(guest.locator('#searchStatus')).toContainText('Не ответили: YummyAnime');
+    await expect(guest.locator('.search-result strong')).toHaveText('Тестовый фильм Rutube');
+    await guest.screenshot({ path: 'test-results/search-desktop.png' });
+    await guest.setViewportSize({ width: 390, height: 844 });
+    expect(
+      await guest.locator('#addDialog').evaluate((el) => el.scrollWidth <= el.clientWidth),
+    ).toBe(true);
+    await guest.screenshot({ path: 'test-results/search-mobile.png' });
+    await guest
+      .getByRole('button', { name: 'Добавить: Тестовый фильм Rutube', exact: true })
+      .click();
+    await expect(host.locator('#queueList')).toContainText('Тестовый фильм Rutube');
+    await expect(host.locator('#queueList img')).toHaveAttribute(
+      'src',
+      'https://pic.rtbcdn.ru/video/test.jpg',
+    );
+    for (const page of [host, guest])
+      await expect(page.frameLocator('#mediaMount iframe').locator('#play')).toBeVisible();
+    const frame = (page) =>
+      page.frames().find((f) => f.url().startsWith('https://rutube.ru/play/embed/'));
+    // Mobile watch panel is active by default; these controls are inside the player frame.
+    await guest.frameLocator('#mediaMount iframe').locator('#play').click();
+    await expect.poll(() => frame(host).evaluate(() => window.snapshot().playing)).toBe(true);
+    await guest.frameLocator('#mediaMount iframe').locator('#seek').click();
+    await expect
+      .poll(() => frame(host).evaluate(() => window.snapshot().time))
+      .toBeGreaterThanOrEqual(39);
+    await host.frameLocator('#mediaMount iframe').locator('#pause').click();
+    await expect.poll(() => frame(guest).evaluate(() => window.snapshot().playing)).toBe(false);
+    const api = new URL(host.url()).pathname.replace('/room/', '/api/rooms/');
+    await host.evaluate(() =>
+      window.dispatchEvent(
+        new MessageEvent('message', {
+          origin: 'https://rutube.ru',
+          source: window,
+          data: JSON.stringify({ type: 'player:changeState', data: { state: 'playing' } }),
+        }),
+      ),
+    );
+    await host.frameLocator('#mediaMount iframe').locator('#ad').click();
+    await host.waitForTimeout(700);
+    const state = await (await host.request.get(api)).json();
+    expect(state.playback.position).toBeLessThan(100);
+    expect(state.playback.playing).toBe(false);
+    await guest.locator('#addButton').click();
+    await guest.locator('[data-type="link"]').click();
+    await guest
+      .locator('#urlInput')
+      .fill(
+        '<iframe src="https://rutube.ru/play/embed/df566fac28e4853bbf4e6389a6d08cda/" onload="window.xss=true"></iframe>',
+      );
+    await guest.locator('#mediaTitleInput').fill('Мой вариант');
+    await guest.locator('#mediaSubmit').click();
+    await expect(host.locator('#queueList')).toContainText('Мой вариант');
+    expect(await guest.evaluate(() => Boolean(window.xss))).toBe(false);
+    await host.locator('#rouletteButton').click();
+    await expect(host.locator('#rouletteCandidates img')).toHaveCount(2);
+  } finally {
+    await a.close();
+    await b.close();
+  }
+});
