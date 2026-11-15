@@ -1,6 +1,6 @@
 # SyncPlayer Codex Progress
 
-- Last updated (UTC): 2026-11-15T07:50:54+00:00
+- Last updated (UTC): 2026-11-15T07:53:38+00:00
 - Current stage/substage: User-requested increment — meeting proposals/votes and LordFilm CVH page adapter.
 - Status: deployed
 - Branch / commit SHA: feat/watch-schedule-lordfilm / be5662beb85f893b175a96623651eb99672f76d3; merged fast-forward. LAN nonce compatibility fix: cfb69acf2be3a47c15618540fd140cfef3fbcfb4 on main.
@@ -9,12 +9,12 @@
 - Implemented & acceptance criteria met: Members propose future times and queued films/roulette; bounded availability voting; host confirmation, binding of completed roulette results and manual start paused; local time-zone display; permanent-room persistence; mobile dialog and next-meeting banner. Fixed-host LordFilm parser extracts title and numeric CVH identifiers; opaque sandbox relay supports shared play/pause/seek at rate 1. Added separate join rate bucket for full rooms.
 - Commands/tests and outcomes: npm run check PASS (33 server/security tests); full npm run test:e2e PASS (15 Chromium scenarios); final nonce/LAN compatibility fix passed npm run check and the two affected schedule/LordFilm browser tests. No dependency changes.
 - Deployment command and result: `/opt/syncplayer/deploy.sh cfb69acf2be3a47c15618540fd140cfef3fbcfb4` healthy; prior feature release be5662b also deployed successfully. No configuration edits or rollback required.
-- Smoke test results: Public health/assets/room UI PASS. Two public clients proposed, voted, confirmed and started a meeting, then played/sought/paused a real uploaded fixture. Fixture was uploaded through LAN because the public proxy rejected multipart with HTML HTTP 500; direct app upload returned 201. Real LordFilm page imported with expected CVH identifiers and opaque sandbox. Smoke media/queue entries removed; public and LAN sessions revoked; empty temporary room and meeting expire normally. Live local CVH metadata loaded but media stream failed with provider access/CORS; alternate Alloha returned 404.
-- Known issues / blockers: User confirmed NPM at 192.168.0.101/CT101 has a full 16 GiB root disk (100%, zero free); this explains the separate public multipart HTTP 500. App LXC100 has 29 GiB free and direct uploads work. Root SSH to CT101/Proxmox is unavailable to the loaded deploy key. User was given conditional storage-capacity check and `pct resize 101 rootfs 24G`; public upload recheck awaits their result. LordFilm playback depends on external access/CORS; errors are shown with original-page link, not bypassed. Stage B yt-dlp stays blocked and was not activated. No external notifications or automatic scheduled playback.
+- Smoke test results: Final public health/assets/UI PASS; public multipart upload 201; two independent public clients proposed, voted, confirmed and started a meeting, then played/sought/paused a real fixture. Real LordFilm page imported with expected CVH identifiers and opaque sandbox mounted. Smoke media/queue entries removed; sessions revoked; empty temporary room and meeting expire normally. Real CVH metadata loaded in a separate local live check but the movie stream failed with provider access/CORS; alternate Alloha returned 404.
+- Known issues / blockers: NPM upload issue resolved: CT101 rootfs was full (16 GiB); user expanded it to 24 GiB, confirmed 7.6 GiB free, and repeated public upload/playback smoke passed. No current app deployment blocker. LordFilm stream availability remains dependent on provider access/CORS; error and original-page link are shown. Stage B yt-dlp isolation blocker is unchanged; this fixed-host adapter does not activate yt-dlp. No external notifications or automatic scheduled playback.
 - Remaining tasks for next session (prioritized, max 5):
-  1. Recheck public multipart upload after user expands CT101 rootfs or otherwise frees NPM storage; do not delete Docker data blindly.
+  1. Await user feedback on scheduling workflow and provider availability; if adding mirrors/players, implement exact allowlists and deterministic tests.
   2. For Stage B, provision an isolated worker/egress policy before enabling yt-dlp; do not infer that the new page adapter resolves that blocker.
-- Next single shippable increment: user-requested schedule/LordFilm release deployed; finish the independent NPM upload recheck when storage is restored, then await user direction.
+- Next single shippable increment: user-requested schedule/LordFilm release complete and deployed; await further user direction. Stage B still requires an isolated worker.
 - Quota observed: unavailable; no percentage inferred.
 
 ## Architecture and scope
