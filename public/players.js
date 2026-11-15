@@ -99,14 +99,19 @@ export class PlayerController {
           'Alloha управляется вручную: пауза и перемотка у каждого свои. Если плеер недоступен или показывает ошибку, выберите Kodik или CVH.',
         );
         return;
-      } else if (media.type === 'kodik' || media.type === 'cvh') {
-        const createAdapter = media.type === 'cvh' ? createCvhAdapter : createKodikAdapter;
+      } else if (media.type === 'kodik' || ['cvh', 'lordfilm'].includes(media.type)) {
+        const createAdapter = ['cvh', 'lordfilm'].includes(media.type)
+          ? createCvhAdapter
+          : createKodikAdapter;
         this.adapter = createAdapter(this.mount, media, {
           changed: (kind) => {
             if (current()) this.event(kind);
           },
           ended: () => {
             if (current() && this.ready) this.ended();
+          },
+          failed: (message) => {
+            if (current()) this.notice(message);
           },
           blocked: (value) => {
             if (current()) this.blocked(value);

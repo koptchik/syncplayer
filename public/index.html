@@ -90,6 +90,7 @@
             <p>Разные города. Один момент.</p>
           </div>
           <div class="room-actions">
+            <button id="scheduleButton" class="small-button" hidden>Расписание</button>
             <button id="returnRoomButton" class="small-button" hidden>Постоянная комната</button>
             <button id="permanentButton" class="small-button" hidden>Закрепить комнату</button>
             <button id="leaveButton" class="small-button" hidden>Выйти</button>
@@ -98,6 +99,7 @@
             </button>
           </div>
         </div>
+        <button id="nextMeeting" class="next-meeting" hidden></button>
         <nav class="mobile-tabs" aria-label="Раздел комнаты">
           <button data-panel="watch" aria-pressed="true">Просмотр и очередь</button
           ><button data-panel="chat" aria-pressed="false">Чат и участники</button>
@@ -152,6 +154,14 @@
               <p id="sourceStatus" class="hint" role="status"></p>
             </section>
             <div id="externalControls" class="external-controls" hidden>
+              <a
+                id="sourcePageLink"
+                class="small-button"
+                target="_blank"
+                rel="noopener noreferrer"
+                hidden
+                >На сайте</a
+              >
               <button data-playback="play" class="small-button">▶ Смотреть</button>
               <button data-playback="pause" class="small-button">Ⅱ Пауза</button>
               <button data-playback="back" class="small-button">−10 с</button>
@@ -391,6 +401,36 @@
         Один вариант — один шанс. Повторные предложения не увеличивают вероятность. Выбывшие видео
         остаются в очереди.
       </p>
+    </dialog>
+    <dialog id="scheduleDialog" aria-labelledby="scheduleTitle">
+      <button class="close" data-close="scheduleDialog" aria-label="Закрыть">×</button>
+      <span class="eyebrow">ДОГОВОРИМСЯ О ВЕЧЕРЕ</span>
+      <h2 id="scheduleTitle">Расписание встреч</h2>
+      <p class="hint" id="scheduleZone"></p>
+      <form id="scheduleForm">
+        <label
+          >Название встречи<input
+            id="meetingTitle"
+            required
+            maxlength="80"
+            placeholder="Например, субботний киновечер"
+        /></label>
+        <div class="meeting-fields">
+          <label>Дата и время<input id="meetingTime" type="datetime-local" required /></label>
+          <label
+            >Что смотрим<select id="meetingMedia" required>
+              <option value="roulette">Выберем рулеткой</option>
+            </select></label
+          >
+        </div>
+        <button class="primary" id="meetingSubmit">Предложить встречу</button>
+        <p class="form-error" id="meetingError" role="status"></p>
+      </form>
+      <p class="hint">
+        Все предлагают время и отмечают удобные варианты. Организатор подтверждает встречу. При
+        выборе рулеткой проведите розыгрыш и привяжите его результат к встрече.
+      </p>
+      <div id="meetingList" class="meeting-list" aria-label="Предложения встреч"></div>
     </dialog>
     <dialog id="helpDialog">
       <button class="close" data-close="helpDialog" aria-label="Закрыть">×</button

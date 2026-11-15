@@ -1,11 +1,20 @@
 import { AppError, parseSource, sourceSchema } from './validation.mjs';
 import { yummyPath, catalogMedia } from './yummy.mjs';
+import { lordfilmPath, createLordfilmResolver } from './lordfilm.mjs';
 
 // A supported format is not a guarantee of availability, codecs or embedding permission.
 // Inspection is deliberately network-free. Only resolve() may call the fixed Yummy adapter.
 export function isCatalogSource(url) {
   try {
     yummyPath(url);
+    return true;
+  } catch {
+    return false;
+  }
+}
+export function isLordfilmSource(url) {
+  try {
+    lordfilmPath(url);
     return true;
   } catch {
     return false;
@@ -37,6 +46,16 @@ function describe(media) {
 }
 export function inspectSource(input) {
   const parsed = sourceSchema.parse(input);
+  if (isLordfilmSource(parsed.url))
+    return {
+      provider: 'lordfilm',
+      sourceUrl: `https://8.lordfilms.mobile${lordfilmPath(parsed.url)}`,
+      title: parsed.title || 'Фильм LordFilm',
+      playbackMode: 'embed',
+      supported: true,
+      reason:
+        'Страница поддерживается через CVH. Доступность видео проверяется при просмотре. Alloha на этой странице не используется; запреты провайдера не обходятся.',
+    };
   if (isCatalogSource(parsed.url))
     return {
       provider: 'yummy',
@@ -61,13 +80,18 @@ export function inspectSource(input) {
     };
   }
 }
-export function createSourceResolver(resolveCatalog) {
+export function createSourceResolver(resolveCatalog, resolveLordfilm = createLordfilmResolver()) {
   return {
     inspect: inspectSource,
     async resolve(input) {
       const parsed = sourceSchema.parse(input);
       const description = inspectSource(parsed);
       if (!description.supported) throw new AppError(400, description.reason);
+      if (description.provider === 'lordfilm') {
+        const media = { ...(await resolveLordfilm(description.sourceUrl)) };
+        if (parsed.title) media.title = parsed.title;
+        return { description: { ...description, title: media.title }, media };
+      }
       if (description.provider !== 'yummy') return { description, media: parseSource(parsed) };
       const result = await resolveCatalog(description.sourceUrl);
       const choice =

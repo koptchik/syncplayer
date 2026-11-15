@@ -1,0 +1,34 @@
+<!doctype html>
+<html lang="ru">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>CVH · Syncplayer</title>
+    <style>
+      html,
+      body {
+        width: 100%;
+        height: 100%;
+        margin: 0;
+        background: #100d15;
+        color: #ddd;
+        font: 14px system-ui;
+      }
+      video-player {
+        display: block;
+        width: 100%;
+        height: 100%;
+      }
+      #status {
+        position: absolute;
+        inset: 40% 10%;
+        text-align: center;
+        pointer-events: none;
+      }
+    </style>
+  </head>
+  <body>
+    <div id="status">Подключаем CVH…</div>
+    <script src="/lordfilm-player.js"></script>
+  </body>
+</html>

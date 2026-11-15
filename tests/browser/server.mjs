@@ -6,6 +6,16 @@ import { catalog, catalogUrl } from '../fixtures/catalog.mjs';
 const liveResolver = createYummyResolver();
 const config = configuration();
 const application = await createApplication(config, {
+  resolveLordfilm: async (url) => {
+    if (url !== 'https://8.lordfilms.mobile/1773/') throw new Error('Unknown fixture');
+    return {
+      type: 'lordfilm',
+      title: 'Test movie',
+      sourcePage: url,
+      config: { titleId: '602749', publisherId: '2253' },
+      live: false,
+    };
+  },
   resolveCatalog: (url) =>
     url === catalogUrl ? Promise.resolve(structuredClone(catalog)) : liveResolver(url),
 });

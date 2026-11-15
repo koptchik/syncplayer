@@ -645,3 +645,163 @@ test('source diagnostics explain support, ignore stale results and preserve ordi
     .poll(() => page.locator('video').evaluate((v) => v.readyState))
     .toBeGreaterThanOrEqual(2);
 });
+
+test('participants plan local times and films; host confirms and starts the meeting for both clients', async ({
+  browser,
+}) => {
+  const a = await browser.newContext({ timezoneId: 'Asia/Tomsk' }),
+    b = await browser.newContext({ timezoneId: 'America/New_York' });
+  for (const context of [a, b])
+    await context.route('https://media.example.org/**', (route) =>
+      route.fulfill({
+        path: path.resolve('tests/fixtures/sample.webm'),
+        contentType: 'video/webm',
+      }),
+    );
+  try {
+    const host = await a.newPage(),
+      guest = await b.newPage();
+    await createRoom(host);
+    await joinRoom(guest, host.url());
+    const api = new URL(host.url()).pathname.replace('/room/', '/api/rooms/');
+    await host.request.post(api + '/media', {
+      headers: { origin: new URL(host.url()).origin },
+      data: { url: 'https://media.example.org/a.webm', title: 'Вечерний фильм' },
+    });
+    await expect(guest.locator('#queueCount')).toHaveText('1');
+    await guest.locator('#scheduleButton').click();
+    await guest.locator('#meetingTitle').fill('Наш общий вечер');
+    const local = await guest.evaluate(() => {
+      const d = new Date(Date.now() + 86400000);
+      return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}T19:30`;
+    });
+    await guest.locator('#meetingTime').fill(local);
+    const media = (await (await host.request.get(api)).json()).queue[0];
+    await guest.locator('#meetingMedia').selectOption(media.id);
+    await guest.locator('#meetingSubmit').click();
+    await expect(guest.locator('.meeting-card')).toHaveCount(1);
+    await host.locator('#scheduleButton').click();
+    await expect(host.locator('.meeting-header')).toContainText('Наш общий вечер');
+    const expectedTime = await host.locator('.meeting-card time').getAttribute('datetime');
+    expect(await guest.locator('.meeting-card time').getAttribute('datetime')).toBe(expectedTime);
+    expect(await guest.locator('.meeting-card time').textContent()).not.toBe(
+      await host.locator('.meeting-card time').textContent(),
+    );
+    await host.getByRole('button', { name: 'Мне удобно', exact: true }).click();
+    await expect(guest.locator('.meeting-card')).toContainText('удобно: 2');
+    await expect(guest.getByRole('button', { name: 'Подтвердить', exact: true })).toHaveCount(0);
+    await host.getByRole('button', { name: 'Подтвердить', exact: true }).click();
+    await expect(guest.locator('.meeting-badge')).toHaveText('Подтверждено');
+    await guest.reload();
+    await guest.locator('#scheduleButton').click();
+    await expect(guest.locator('.meeting-badge')).toHaveText('Подтверждено');
+    await guest.setViewportSize({ width: 390, height: 844 });
+    expect(
+      await guest.locator('#scheduleDialog').evaluate((el) => el.scrollWidth <= el.clientWidth),
+    ).toBe(true);
+    await guest.screenshot({ path: 'test-results/schedule-mobile.png' });
+    await host.screenshot({ path: 'test-results/schedule-desktop.png' });
+    await host.getByRole('button', { name: 'Начать встречу', exact: true }).click();
+    await expect(host.locator('#scheduleDialog')).toBeHidden();
+    await expect(guest.locator('.meeting-badge')).toHaveText('Начали просмотр');
+    await guest.locator('[data-close="scheduleDialog"]').click();
+    await expect(host.locator('#nextMeeting')).toBeHidden();
+    for (const size of [
+      { width: 1366, height: 680 },
+      { width: 390, height: 844 },
+      { width: 844, height: 390 },
+    ]) {
+      await host.setViewportSize(size);
+      await expect(host.locator('#scheduleButton')).toBeInViewport();
+      if (size.width <= 850) await host.locator('[data-panel="chat"]').click();
+      await expect(host.locator('#chatInput')).toBeInViewport();
+      expect(
+        await host.evaluate(
+          () =>
+            document.documentElement.scrollHeight <= innerHeight &&
+            document.documentElement.scrollWidth <= innerWidth,
+        ),
+      ).toBe(true);
+      if (size.width <= 850) await host.locator('[data-panel="watch"]').click();
+    }
+  } finally {
+    await a.close();
+    await b.close();
+  }
+});
+
+test('LordFilm CVH runs in an opaque sandbox and synchronizes across viewers', async ({
+  browser,
+}) => {
+  const a = await browser.newContext(),
+    b = await browser.newContext();
+  for (const context of [a, b])
+    await context.route('https://player.cdnvideohub.com/s2/stable/video-player.umd.js', (route) =>
+      route.fulfill({
+        path: path.resolve('tests/fixtures/lordfilm-component.js'),
+        contentType: 'application/javascript',
+        headers: { 'access-control-allow-origin': '*' },
+      }),
+    );
+  try {
+    const host = await a.newPage(),
+      guest = await b.newPage();
+    await createRoom(host);
+    await joinRoom(guest, host.url());
+    await guest.locator('[data-source="link"]').click();
+    await guest.locator('#urlInput').fill('https://8.lordfilms.mobile/1773/');
+    await guest.locator('#inspectSourceButton').click();
+    await expect(guest.locator('#sourceDiagnosis')).toContainText('CVH');
+    await guest.locator('#mediaSubmit').click();
+    for (const page of [host, guest])
+      await expect(page.frameLocator('#mediaMount iframe').locator('video-player')).toHaveText(
+        'Test CVH',
+      );
+    await expect(host.locator('#playerNotice')).toBeHidden();
+    const frame = (page) => page.frames().find((f) => f.url().includes('/lordfilm-player.html'));
+    expect(
+      await frame(host).evaluate(() => {
+        try {
+          localStorage.getItem('syncplayer.name');
+          return false;
+        } catch {
+          return true;
+        }
+      }),
+    ).toBe(true);
+    await guest.locator('[data-playback="play"]').click();
+    const api = new URL(host.url()).pathname.replace('/room/', '/api/rooms/');
+    const state = async () => (await host.request.get(api)).json();
+    await expect.poll(async () => (await state()).playback.playing).toBe(true);
+    await guest.locator('[data-playback="forward"]').click();
+    await expect.poll(async () => (await state()).playback.position).toBeGreaterThanOrEqual(10);
+    await host.locator('[data-playback="pause"]').click();
+    await expect.poll(async () => (await state()).playback.playing).toBe(false);
+    const before = (await state()).playbackRevision;
+    await host.evaluate(() =>
+      window.dispatchEvent(
+        new MessageEvent('message', {
+          origin: 'null',
+          source: window,
+          data: { key: 'player_play', nonce: 'wrong' },
+        }),
+      ),
+    );
+    await host.waitForTimeout(400);
+    expect((await state()).playbackRevision).toBe(before);
+    expect(await host.locator('#mediaMount iframe').getAttribute('sandbox')).not.toContain(
+      'allow-same-origin',
+    );
+    await frame(host).evaluate(() =>
+      document.querySelector('video-player').dispatchEvent(new CustomEvent('error')),
+    );
+    await expect(host.locator('#playerNotice')).toContainText('CORS');
+    await expect(host.locator('#sourcePageLink')).toHaveAttribute(
+      'href',
+      'https://8.lordfilms.mobile/1773/',
+    );
+  } finally {
+    await a.close();
+    await b.close();
+  }
+});

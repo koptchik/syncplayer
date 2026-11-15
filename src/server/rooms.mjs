@@ -73,6 +73,12 @@ export class RoomStore {
   }
   leave(room, member) {
     for (const [hash, value] of room.members) if (value.id === member.id) room.members.delete(hash);
+    for (const event of room.schedule || []) {
+      if (event.votes.includes(member.id)) {
+        event.votes = event.votes.filter((id) => id !== member.id);
+        event.revision++;
+      }
+    }
     for (const socket of room.sockets)
       if (socket.member.id === member.id) socket.close(1000, 'Left room');
     const next =
@@ -169,7 +175,7 @@ export class RoomStore {
     room.playback = {
       mediaId: data.mediaId,
       playing: data.playing,
-      rate: ['twitch', 'cvh'].includes(media?.type) ? 1 : data.rate,
+      rate: ['twitch', 'cvh', 'lordfilm'].includes(media?.type) ? 1 : data.rate,
       position: media?.live ? 0 : data.position,
       updatedAt: Date.now(),
     };
@@ -284,6 +290,7 @@ export class RoomStore {
       queue: room.queue.map(({ diskName: _diskName, ...m }) => m),
       messages: room.messages,
       roulette: room.roulette || { nominations: [] },
+      schedule: room.schedule || [],
       playback: { ...room.playback, position: this.position(room), updatedAt: Date.now() },
       serverTime: Date.now(),
     };

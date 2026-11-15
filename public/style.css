@@ -2191,3 +2191,131 @@ dialog {
     transition: none;
   }
 }
+
+.next-meeting {
+  border: 1px solid #62427c;
+  border-radius: 9px;
+  background: #281e35;
+  color: #ddc6fa;
+  font-size: 12px;
+  text-align: left;
+  padding: 8px 12px;
+  margin: 0 0 10px;
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  flex-shrink: 0;
+}
+#scheduleDialog {
+  width: 680px;
+}
+#scheduleDialog h2 {
+  margin-bottom: 10px;
+}
+#scheduleForm {
+  padding: 14px;
+  background: #17131e;
+  border: 1px solid #463052;
+  border-radius: 12px;
+}
+#scheduleForm .primary {
+  margin: 8px 0 0;
+}
+.meeting-fields {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 12px;
+}
+.meeting-fields label {
+  min-width: 0;
+}
+.meeting-fields select,
+.meeting-fields input {
+  width: 100%;
+  min-width: 0;
+  box-sizing: border-box;
+  padding: 10px;
+  background: #2b2035;
+  border: 1px solid #584069;
+  color: var(--text);
+  border-radius: 7px;
+  color-scheme: dark;
+}
+.meeting-list {
+  display: grid;
+  gap: 12px;
+  margin-top: 16px;
+}
+.meeting-card {
+  padding: 16px;
+  border: 1px solid #4d385e;
+  border-radius: 12px;
+  background: #241b2d;
+}
+.meeting-card.confirmed {
+  border-color: #9c7bce;
+  background: linear-gradient(120deg, #352342, #211b2e);
+}
+.meeting-card.cancelled,
+.meeting-card.started {
+  opacity: 0.65;
+}
+.meeting-header {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 8px;
+  justify-content: space-between;
+}
+.meeting-header h3 {
+  font-size: 16px;
+  margin: 0;
+  overflow-wrap: anywhere;
+}
+.meeting-badge {
+  font-size: 10px;
+  padding: 4px 7px;
+  border-radius: 5px;
+  background: #503c64;
+}
+.meeting-card time {
+  display: block;
+  font-weight: 700;
+  color: #cfb4ff;
+  margin: 8px 0;
+}
+.meeting-card .meeting-movie {
+  font-size: 13px;
+  margin: 7px 0;
+  overflow-wrap: anywhere;
+}
+.meeting-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+.meeting-actions button {
+  margin: 0;
+}
+.meeting-actions [aria-pressed='true'] {
+  background: #584071;
+  border-color: #af8ce0;
+}
+@media (max-width: 500px) {
+  #scheduleDialog {
+    padding: 24px 15px;
+  }
+  .meeting-fields {
+    grid-template-columns: 1fr;
+    gap: 0;
+  }
+  .meeting-card {
+    padding: 12px;
+  }
+  .next-meeting {
+    font-size: 10px;
+    padding: 6px 8px;
+    margin-bottom: 6px;
+  }
+}

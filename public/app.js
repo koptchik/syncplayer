@@ -1,5 +1,6 @@
 import { PlayerController } from './players.js';
 import { createRoulette } from './roulette.js';
+import { createSchedule } from './schedule.js';
 const $ = (selector) => document.querySelector(selector);
 const $$ = (selector) => [...document.querySelectorAll(selector)];
 const routeId = () => location.pathname.match(/^\/room\/([a-f0-9]{32})\/?$/)?.[1];
@@ -181,6 +182,8 @@ function recoverMissingRoom() {
   }
   room = null;
   $('#leaveButton').hidden = true;
+  $('#scheduleButton').hidden = true;
+  $('#nextMeeting').hidden = true;
   $('#permanentButton').hidden = true;
   mediaGeneration++;
   player.load(null);
@@ -202,7 +205,7 @@ function recoverMissingRoom() {
   $('#roomBadge').textContent = 'КОМНАТА ЗАКРЫТА';
   $('#inviteButton span').textContent = 'Создать комнату';
   $('#inviteButton use').setAttribute('href', '#i-plus');
-  for (const id of ['#inviteDialog', '#addDialog', '#rouletteDialog']) {
+  for (const id of ['#inviteDialog', '#addDialog', '#rouletteDialog', '#scheduleDialog']) {
     if ($(id).open) $(id).close();
   }
   notice('Прежнее приглашение больше не действует. Для новой комнаты будет создана новая ссылка.');
@@ -234,7 +237,7 @@ function openAdd(type = 'file', nominate = false) {
         : 'https://www.youtube.com/watch?v=…';
   $('#sourceHint').textContent =
     type === 'link'
-      ? 'Вставьте ссылку или код iframe: Kodik, YouTube, Vimeo, Twitch либо прямая видеоссылка. Для Kodik скопируйте код выбранной серии и озвучки. Страницу old.yummyani.me/catalog/item/… можно добавить целиком. Плеер, озвучка и серия выбираются под видео во время просмотра.'
+      ? 'Вставьте ссылку или код iframe: Kodik, YouTube, Vimeo, Twitch либо прямая видеоссылка. Для Kodik скопируйте код выбранной серии и озвучки. Страницы old.yummyani.me/catalog/item/… и 8.lordfilms.mobile/<номер>/ можно добавить целиком. Плеер, озвучка и серия выбираются под видео во время просмотра.'
       : type === 'twitch'
         ? 'Канал или запись Twitch. Для прямых эфиров задержка у участников может различаться. Нужен HTTPS-домен.'
         : 'Подойдут обычные ссылки, Shorts и youtu.be. Некоторые видео запрещены для встраивания автором.';
@@ -279,7 +282,7 @@ function renderQueue() {
       icon(
         media.type === 'file'
           ? 'folder'
-          : ['remote', 'vimeo', 'kodik', 'cvh', 'alloha'].includes(media.type)
+          : ['remote', 'vimeo', 'kodik', 'cvh', 'lordfilm', 'alloha'].includes(media.type)
             ? 'link'
             : media.type,
       ),
@@ -289,7 +292,7 @@ function renderQueue() {
     const title = document.createElement('b');
     title.textContent = media.catalogTitle || media.title;
     const detail = document.createElement('small');
-    detail.textContent = `${active ? 'Сейчас смотрим · ' : ''}${media.type === 'file' ? `${(media.bytes / 1024 ** 2).toFixed(1)} МБ · файл` : media.type === 'youtube' ? 'YouTube' : ['kodik', 'cvh', 'alloha'].includes(media.type) ? { kodik: 'Kodik', cvh: 'CVH', alloha: 'Alloha · вручную' }[media.type] : media.type === 'vimeo' ? 'Vimeo' : media.type === 'remote' ? (media.format === 'hls' ? 'HLS · внешний поток' : 'Видео по ссылке') : media.live ? 'Twitch · прямой эфир' : 'Twitch · запись'}`;
+    detail.textContent = `${active ? 'Сейчас смотрим · ' : ''}${media.type === 'file' ? `${(media.bytes / 1024 ** 2).toFixed(1)} МБ · файл` : media.type === 'youtube' ? 'YouTube' : ['kodik', 'cvh', 'lordfilm', 'alloha'].includes(media.type) ? { kodik: 'Kodik', cvh: 'CVH', lordfilm: 'LordFilm · CVH', alloha: 'Alloha · вручную' }[media.type] : media.type === 'vimeo' ? 'Vimeo' : media.type === 'remote' ? (media.format === 'hls' ? 'HLS · внешний поток' : 'Видео по ссылке') : media.live ? 'Twitch · прямой эфир' : 'Twitch · запись'}`;
     if (media.catalogUrl)
       detail.textContent = `${active ? 'Сейчас смотрим · ' : ''}${media.playerLabel} · ${media.dubbing} · серия ${media.episode}`;
     text.append(title, detail);
@@ -394,6 +397,7 @@ async function receive(nextRoom) {
   $('#inviteButton use').setAttribute('href', '#i-users');
   $('#roomBadge').textContent = room.permanent ? 'ПОСТОЯННАЯ КОМНАТА' : 'КОМНАТА ОТКРЫТА';
   $('#leaveButton').hidden = false;
+  $('#scheduleButton').hidden = false;
   $('#returnRoomButton').hidden = true;
   if (room.permanent) {
     try {
@@ -417,6 +421,7 @@ async function receive(nextRoom) {
   renderPeople();
   renderMessages();
   roulette.update(room);
+  schedule.update(room);
   if (
     player.mediaId !== (media?.id || null) ||
     player.sourceVersion !== (media?.sourceVersion || 0)
@@ -616,6 +621,7 @@ $('#inspectSourceButton').addEventListener('click', async () => {
       vimeo: 'Vimeo',
       kodik: 'Kodik',
       cvh: 'CVH',
+      lordfilm: 'LordFilm · CVH',
       alloha: 'Alloha',
       yummy: 'YummyAnime',
       hls: 'HLS',
@@ -926,7 +932,10 @@ function showSourceSelection() {
 }
 async function renderSources(media, refresh = false) {
   $('#sourceControls').hidden = !media?.catalogUrl;
-  $('#externalControls').hidden = media?.type !== 'cvh';
+  $('#externalControls').hidden = !['cvh', 'lordfilm'].includes(media?.type);
+  $('#sourcePageLink').hidden = !media?.sourcePage;
+  if (media?.sourcePage) $('#sourcePageLink').href = media.sourcePage;
+  else $('#sourcePageLink').removeAttribute('href');
   if (!media?.catalogUrl) {
     optionsMediaId = null;
     optionsRequestId++;
@@ -987,7 +996,7 @@ $('#applySource').addEventListener('click', async () => {
 for (const button of $$('[data-playback]'))
   button.addEventListener('click', async () => {
     const media = activeMedia();
-    if (media?.type !== 'cvh') return;
+    if (!['cvh', 'lordfilm'].includes(media?.type)) return;
     const action = button.dataset.playback;
     const current = player.state() || room.playback;
     const position = Math.max(
@@ -1021,6 +1030,21 @@ $('#rouletteButton').addEventListener('click', () => {
   if (!room) return toast('Сначала войдите в комнату');
   roulette.open();
 });
+
+const schedule = createSchedule({
+  request: async (path, data) => {
+    const result = await roomApi(`/schedule${path}`, data);
+    if (data.action === 'start') forceNext = true;
+    await receive(result);
+  },
+  error: toast,
+  openRoulette: () => {
+    $('#scheduleDialog').close();
+    roulette.open();
+  },
+});
+$('#scheduleButton').addEventListener('click', () => schedule.open());
+$('#nextMeeting').addEventListener('click', () => schedule.open());
 
 try {
   const savedRoom = localStorage.getItem('syncplayerPermanentRoom');

@@ -12,7 +12,8 @@ import { fileURLToPath } from 'node:url';
 import { ZodError } from 'zod';
 import { RoomStore, randomId } from './rooms.mjs';
 import { createYummyResolver, catalogMedia, yummyPath } from './yummy.mjs';
-import { createSourceResolver, isCatalogSource } from './sources.mjs';
+import { createSourceResolver, isCatalogSource, isLordfilmSource } from './sources.mjs';
+import { proposeSchedule, actOnSchedule } from './schedule.mjs';
 import {
   AppError,
   createSchema,
@@ -39,7 +40,10 @@ function sessionToken(req) {
   return value?.slice(cookieName.length + 1) || '';
 }
 
-export async function createApplication(config, { resolveCatalog = createYummyResolver() } = {}) {
+export async function createApplication(
+  config,
+  { resolveCatalog = createYummyResolver(), resolveLordfilm } = {},
+) {
   const app = express();
   const server = createServer(app);
   const store = new RoomStore(config);
@@ -75,6 +79,8 @@ export async function createApplication(config, { resolveCatalog = createYummyRe
           styleSrc: ["'self'", "'unsafe-inline'"],
           imgSrc: ["'self'", 'data:', 'https://i.ytimg.com', 'https://static.yani.tv'],
           frameSrc: [
+            "'self'",
+            'https://player.cdnvideohub.com',
             'https://ru.yummyani.me',
             'https://alloha.yani.tv',
             'https://kodikplayer.com',
@@ -145,12 +151,13 @@ export async function createApplication(config, { resolveCatalog = createYummyRe
       message: { error: 'Слишком много запросов. Подождите немного.' },
     });
   const roomLimiter = limiter(60000, 20);
+  const joinLimiter = limiter(60000, 60);
   const chatLimiter = limiter(10000, 15);
   const controlLimiter = limiter(60000, 150);
   const mutationLimiter = limiter(60000, 60);
   const resolveLimiter = limiter(60000, 10);
   const resolvePage = resolveCatalog;
-  const sources = createSourceResolver(resolvePage);
+  const sources = createSourceResolver(resolvePage, resolveLordfilm);
   const inspectLimiter = limiter(60000, 30);
   app.use('/api', (_req, res, next) => {
     res.set('Cache-Control', 'no-store');
@@ -172,7 +179,7 @@ export async function createApplication(config, { resolveCatalog = createYummyRe
     setSession(req, res, room, token);
     res.status(201).json(store.snapshot(room, member));
   });
-  app.post('/api/rooms/:id/join', roomLimiter, (req, res) => {
+  app.post('/api/rooms/:id/join', joinLimiter, (req, res) => {
     const { name } = joinSchema.parse(req.body);
     const room = store.get(idSchema.parse(req.params.id));
     let member;
@@ -302,6 +309,16 @@ export async function createApplication(config, { resolveCatalog = createYummyRe
     store.broadcast(req.room);
     res.json(store.snapshot(req.room, req.member));
   });
+  app.post('/api/rooms/:id/schedule', mutationLimiter, (req, res) => {
+    proposeSchedule(store, req.room, req.member, req.body);
+    store.broadcast(req.room);
+    res.status(201).json(store.snapshot(req.room, req.member));
+  });
+  app.post('/api/rooms/:id/schedule/:eventId', mutationLimiter, (req, res) => {
+    actOnSchedule(store, req.room, req.member, idSchema.parse(req.params.eventId), req.body);
+    store.broadcast(req.room);
+    res.json(store.snapshot(req.room, req.member));
+  });
   app.post('/api/rooms/:id/control', controlLimiter, (req, res) => {
     store.control(req.room, controlSchema.parse(req.body), req.member);
     store.broadcast(req.room);
@@ -311,7 +328,8 @@ export async function createApplication(config, { resolveCatalog = createYummyRe
     '/api/rooms/:id/media',
     mutationLimiter,
     (req, res, next) => {
-      if (isCatalogSource(req.body?.url)) return resolveLimiter(req, res, next);
+      if (isCatalogSource(req.body?.url) || isLordfilmSource(req.body?.url))
+        return resolveLimiter(req, res, next);
       next();
     },
     addSource,
@@ -462,6 +480,17 @@ export async function createApplication(config, { resolveCatalog = createYummyRe
       fileURLToPath(new URL('../../node_modules/hls.js/dist/hls.min.js', import.meta.url)),
     ),
   );
+  app.get('/lordfilm-player.html', (_req, res) => {
+    res.set(
+      'Content-Security-Policy',
+      "default-src 'none'; script-src 'self' https://player.cdnvideohub.com; style-src 'unsafe-inline'; connect-src https:; frame-src https://player.cdnvideohub.com; img-src https: data:; media-src https: blob:; frame-ancestors 'self'; base-uri 'none'; form-action 'none'",
+    );
+    res.sendFile(path.join(publicDir, 'lordfilm-player.html'));
+  });
+  app.get('/lordfilm-player.js', (_req, res) => {
+    res.set('Cross-Origin-Resource-Policy', 'cross-origin');
+    res.sendFile(path.join(publicDir, 'lordfilm-player.js'));
+  });
   app.use(express.static(publicDir, { dotfiles: 'deny', index: 'index.html', maxAge: 0 }));
   app.get('/room/:id', (_req, res) => res.sendFile(path.join(publicDir, 'index.html')));
   app.use((_req, res) => res.status(404).type('text').send('Страница не найдена'));
