@@ -48,9 +48,9 @@ export class PlayerController {
     this.sourceVersion = 0;
     this.ready = false;
   }
-  event(kind = 'state') {
+  event(kind = 'state', { localSeek = false } = {}) {
     if (!this.ready) return;
-    if (performance.now() < this.ignoreUntil) {
+    if (!localSeek && performance.now() < this.ignoreUntil) {
       if (!this.expected) return;
       const state = this.adapter.state();
       const target =
@@ -68,7 +68,7 @@ export class PlayerController {
       )
         return;
     }
-    this.changed();
+    this.changed(kind);
   }
   state() {
     return this.ready && this.adapter ? this.adapter.state() : null;
@@ -125,6 +125,7 @@ export class PlayerController {
       } else if (media.type === 'file' || media.type === 'remote') {
         let Hls;
         let hls;
+        let appliedSeek = null;
         if (media.format === 'hls') {
           await loadScript('/vendor/hls.min.js', () => Boolean(window.Hls));
           if (!current()) return;
@@ -147,6 +148,7 @@ export class PlayerController {
           }),
           seek: (n) => {
             video.currentTime = n;
+            appliedSeek = video.currentTime;
           },
           rate: (n) => {
             video.playbackRate = n;
@@ -161,10 +163,16 @@ export class PlayerController {
             video.remove();
           },
         };
-        for (const event of ['play', 'pause', 'seeked', 'ratechange'])
+        for (const event of ['play', 'pause', 'ratechange'])
           video.addEventListener(event, () => {
             if (current()) this.event(event);
           });
+        video.addEventListener('seeked', () => {
+          if (!current()) return;
+          const fromRoom = appliedSeek !== null && Math.abs(video.currentTime - appliedSeek) < 0.05;
+          appliedSeek = null;
+          if (!fromRoom) this.event('seeked', { localSeek: true });
+        });
         video.addEventListener('ended', () => {
           if (current() && this.ready) this.ended();
         });
@@ -412,7 +420,8 @@ export class PlayerController {
     }
   }
   async apply(playback, { force = false, skew = 0, live = false } = {}) {
-    if (!this.ready || !this.adapter || playback.mediaId !== this.mediaId) return;
+    const { adapter, generation } = this;
+    if (!this.ready || !adapter || playback.mediaId !== this.mediaId) return;
     const target = Math.max(
       0,
       playback.position +
@@ -420,9 +429,9 @@ export class PlayerController {
           ? (Math.max(0, Date.now() + skew - playback.updatedAt) / 1000) * playback.rate
           : 0),
     );
-    const state = this.adapter.state();
+    const state = adapter.state();
     this.ignoreUntil = performance.now() + 800;
-    this.expected = {
+    const expected = {
       position:
         Number.isFinite(state.duration) && state.duration > 0
           ? Math.min(target, state.duration)
@@ -431,19 +440,27 @@ export class PlayerController {
       rate: playback.rate,
       at: performance.now(),
     };
-    if (!live && (force || Math.abs(state.position - target) > 1.2))
-      this.adapter.seek(
-        Number.isFinite(state.duration) && state.duration > 0
-          ? Math.min(target, state.duration)
-          : target,
-      );
-    if (state.rate !== playback.rate) this.adapter.rate(playback.rate);
+    this.expected = expected;
+    const current = () => generation === this.generation && this.expected === expected;
     try {
-      if (playback.playing && !state.playing) await this.adapter.play();
-      else if (!playback.playing && state.playing) this.adapter.pause();
-      if (!playback.playing) this.blocked(false);
-    } catch (_error) {
-      this.blocked(true);
+      if (!live && (force || Math.abs(state.position - target) > 1.2))
+        adapter.seek(expected.position);
+      if (state.rate !== playback.rate) adapter.rate(playback.rate);
+      if (playback.playing && !state.playing) {
+        await adapter.play();
+        if (current()) this.blocked(false);
+      } else if (!playback.playing) {
+        if (state.playing) adapter.pause();
+        this.blocked(false);
+      }
+    } catch (error) {
+      if (!current() || error?.name === 'AbortError') return;
+      const autoplayBlocked = error?.name === 'NotAllowedError';
+      this.blocked(autoplayBlocked);
+      if (!autoplayBlocked)
+        this.notice(
+          'Не удалось воспроизвести видео. Проверьте источник или выберите другое видео.',
+        );
     }
   }
   async unlock(playback, options) {
@@ -451,6 +468,7 @@ export class PlayerController {
     await this.apply(playback, { ...options, force: true });
   }
   pause() {
+    this.expected = null;
     this.ignoreUntil = performance.now() + 1000;
     this.adapter?.pause();
   }

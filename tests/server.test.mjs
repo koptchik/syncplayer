@@ -195,13 +195,20 @@ test('room lifecycle, authorization, media isolation and synchronization', async
       const earlier = (await request(roomPath(''), { cookie: host })).body;
       const command = { mediaId, position: 42, playing: false, rate: 1.5 };
       assert.equal(
-        (await request(roomPath('/control'), { method: 'POST', cookie: guest, data: command }))
-          .response.status,
+        (
+          await request(roomPath('/control'), {
+            method: 'POST',
+            cookie: guest,
+            data: { ...command, seek: true },
+          })
+        ).response.status,
         200,
       );
       let current = (await request(roomPath(''), { cookie: guest })).body;
       assert.equal(current.controllerId, current.me.id);
       assert.equal(current.playback.position, 42);
+      assert.equal(current.seekRevision, current.playbackRevision);
+      assert.ok(current.seekRevision > earlier.seekRevision);
       assert.equal(
         (
           await request(roomPath('/control'), {
@@ -233,11 +240,14 @@ test('room lifecycle, authorization, media isolation and synchronization', async
           await request(roomPath('/control'), {
             method: 'POST',
             cookie: guest,
-            data: { ...command, checkpoint: true, revision: current.playbackRevision },
+            data: { ...command, checkpoint: true, seek: true, revision: current.playbackRevision },
           })
         ).response.status,
         200,
       );
+      const afterCheckpoint = (await request(roomPath(''), { cookie: guest })).body;
+      assert.equal(afterCheckpoint.seekRevision, current.seekRevision);
+      assert.ok(afterCheckpoint.playbackRevision > current.playbackRevision);
       assert.equal(
         (await request(roomPath('/control'), { method: 'POST', data: command })).response.status,
         401,

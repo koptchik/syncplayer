@@ -19,6 +19,7 @@ export const controlSchema = z
     position: z.number().finite().min(0).max(864000),
     playing: z.boolean(),
     checkpoint: z.boolean().optional().default(false),
+    seek: z.boolean().optional(),
     revision: z.number().int().nonnegative().optional(),
     rate: z.number().refine((n) => [0.25, 0.5, 0.75, 1, 1.25, 1.5, 1.75, 2].includes(n)),
   })

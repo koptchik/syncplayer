@@ -86,8 +86,8 @@ async function api(path, body, method = 'POST', signal) {
 const roomApi = (suffix, body, method, signal) =>
   api(`/api/rooms/${room.id}${suffix}`, body, method, signal);
 const player = new PlayerController($('#mediaMount'), {
-  changed() {
-    if (room && connected) scheduleControl();
+  changed(kind) {
+    if (room && connected) scheduleControl(false, kind === 'seek' || kind === 'seeked');
   },
   async ended() {
     if (
@@ -115,7 +115,7 @@ const player = new PlayerController($('#mediaMount'), {
 function options(force = false) {
   return { force, skew, live: room?.queue.find((m) => m.id === room.playback.mediaId)?.live };
 }
-function scheduleControl(checkpoint = false) {
+function scheduleControl(checkpoint = false, seek = false) {
   if (!room || !connected || !player.ready || room.roulette?.endsAt > Date.now() + skew) return;
   if (checkpoint && pendingControl && !pendingControl.checkpoint) return;
   const state = player.state();
@@ -127,6 +127,7 @@ function scheduleControl(checkpoint = false) {
     playing: state.playing,
     rate: state.rate,
     checkpoint,
+    ...(!checkpoint && (seek || pendingControl?.seek) ? { seek: true } : {}),
     revision: room.playbackRevision,
   };
   clearTimeout(controlTimer);
@@ -426,6 +427,10 @@ function renderMessages() {
 async function receive(nextRoom) {
   if (room && nextRoom.id === room.id && nextRoom.revision < room.revision) return;
   const previousController = room?.controllerId;
+  const remoteSeek =
+    room?.id === nextRoom.id &&
+    nextRoom.controllerId !== nextRoom.me.id &&
+    (nextRoom.seekRevision ?? 0) > (room.seekRevision ?? 0);
   if (nextRoom.roulette?.id && nextRoom.roulette.id !== room?.roulette?.id) {
     forceNext = true;
     pendingControl = null;
@@ -473,13 +478,14 @@ async function receive(nextRoom) {
     pendingControl = null;
     clearTimeout(controlTimer);
     const generation = ++mediaGeneration;
+    forceNext = false;
     await player.load(media, room.id);
     if (generation !== mediaGeneration) return;
     if (media) await player.apply(room.playback, options(true));
-    forceNext = false;
   } else if (room.controllerId !== room.me.id || previousController !== room.me.id || forceNext) {
-    await player.apply(room.playback, options(forceNext));
+    const force = forceNext || remoteSeek;
     forceNext = false;
+    await player.apply(room.playback, options(force));
   }
 }
 function connect() {
@@ -1102,6 +1108,7 @@ for (const button of $$('[data-playback]'))
         mediaId: media.id,
         sourceVersion: media.sourceVersion || 0,
         position,
+        ...(action === 'back' || action === 'forward' ? { seek: true } : {}),
         rate: 1,
         playing: action === 'play' ? true : action === 'pause' ? false : current.playing,
       });

@@ -145,6 +145,44 @@ test('two users upload, watch, seek, pause, chat safely, reconnect and delete me
   }
 });
 
+test('short paused seeks propagate in both directions without echoing back', async ({
+  browser,
+}) => {
+  const hostContext = await browser.newContext();
+  const guestContext = await browser.newContext();
+  try {
+    const host = await hostContext.newPage();
+    const guest = await guestContext.newPage();
+    await createRoom(host);
+    await joinRoom(guest, host.url());
+    await host.locator('#addButton').click();
+    await host.locator('#fileInput').setInputFiles(path.resolve('tests/fixtures/sample.webm'));
+    await host.locator('#mediaSubmit').click();
+    const hostVideo = host.locator('#mediaMount video');
+    const guestVideo = guest.locator('#mediaMount video');
+    for (const video of [hostVideo, guestVideo]) {
+      await expect.poll(() => video.evaluate((el) => el.readyState)).toBeGreaterThan(1);
+    }
+    const seek = async (from, to, position) => {
+      await from.evaluate((el, target) => {
+        el.currentTime = target;
+      }, position);
+      await expect
+        .poll(() => to.evaluate((el) => ({ position: el.currentTime, paused: el.paused })))
+        .toEqual({ position, paused: true });
+    };
+    await seek(hostVideo, guestVideo, 5);
+    await seek(guestVideo, hostVideo, 5.5);
+    await seek(hostVideo, guestVideo, 5.25);
+    const roomPath = new URL(host.url()).pathname.replace('/room/', '/api/rooms/');
+    const snapshot = await (await host.request.get(roomPath)).json();
+    expect(snapshot.controllerId).toBe(snapshot.me.id);
+  } finally {
+    await hostContext.close();
+    await guestContext.close();
+  }
+});
+
 test('invalid links show a useful error; YouTube and Twitch queue items are parsed', async ({
   page,
 }) => {

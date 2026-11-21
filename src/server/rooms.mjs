@@ -208,6 +208,8 @@ export class RoomStore {
     room.clock = performance.now();
     if (member) room.controllerId = member.id;
     room.playbackRevision++;
+    if (member && data.seek && !data.checkpoint && !media?.live)
+      room.seekRevision = room.playbackRevision;
     room.revision++;
   }
   select(room, id, member) {
@@ -305,6 +307,7 @@ export class RoomStore {
       permanent: Boolean(room.permanent),
       revision: room.revision,
       playbackRevision: room.playbackRevision,
+      seekRevision: room.seekRevision ?? 0,
       controllerId: room.controllerId,
       me: {
         id: member.id,
