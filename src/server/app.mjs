@@ -13,6 +13,7 @@ import { ZodError } from 'zod';
 import { RoomStore, randomId } from './rooms.mjs';
 import { createYummyResolver, catalogMedia, yummyPath } from './yummy.mjs';
 import { createSourceResolver, isCatalogSource, isLordfilmSource } from './sources.mjs';
+import { createPageDiscovery } from './page-discovery.mjs';
 import { createSearchService } from './search.mjs';
 import { createMetadataResolver } from './metadata.mjs';
 import { ARTWORK_HOSTS } from '../../public/artwork.js';
@@ -50,6 +51,7 @@ export async function createApplication(
     resolveLordfilm,
     enrichMedia = createMetadataResolver(),
     searchSources = createSearchService(),
+    discoverPage = createPageDiscovery(config.discoveryHosts ?? new Set()),
   } = {},
 ) {
   const app = express();
@@ -167,6 +169,7 @@ export async function createApplication(
   const resolveLimiter = limiter(60000, 10);
   const resolvePage = resolveCatalog;
   const sources = createSourceResolver(resolvePage, resolveLordfilm);
+  const discoveryLimiter = limiter(60000, 10);
   const inspectLimiter = limiter(60000, 30);
   const searchLimiter = limiter(60000, 10);
   app.use('/api', (_req, res, next) => {
@@ -228,6 +231,12 @@ export async function createApplication(
   });
   app.post('/api/rooms/:id/source/search', searchLimiter, async (req, res) => {
     const result = await searchSources(req.body);
+    store.get(req.room.id);
+    store.authenticate(req.room, sessionToken(req));
+    res.json(result);
+  });
+  app.post('/api/rooms/:id/source/discover', discoveryLimiter, async (req, res) => {
+    const result = await discoverPage(req.body);
     store.get(req.room.id);
     store.authenticate(req.room, sessionToken(req));
     res.json(result);

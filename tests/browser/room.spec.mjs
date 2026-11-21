@@ -1,4 +1,5 @@
 import { test, expect } from '@playwright/test';
+import { readFile } from 'node:fs/promises';
 import path from 'node:path';
 import { catalogUrl } from '../fixtures/catalog.mjs';
 
@@ -895,5 +896,68 @@ test('Rutube search imports metadata and synchronizes iframe playback without tr
   } finally {
     await a.close();
     await b.close();
+  }
+});
+
+test('discovered page video joins the queue and late viewers follow playback', async ({
+  browser,
+}) => {
+  const hostContext = await browser.newContext();
+  const guestContext = await browser.newContext();
+  const host = await hostContext.newPage();
+  const guest = await guestContext.newPage();
+  try {
+    const fixture = await readFile('tests/fixtures/sample.webm');
+    for (const context of [hostContext, guestContext]) {
+      await context.route('https://mdn.github.io/**/clip.webm', (route) => {
+        // Chromium needs a partial response to make the remote video seekable.
+        const range = /^bytes=(\d+)-(\d*)$/.exec(route.request().headers().range ?? '');
+        if (!range) return route.fulfill({ body: fixture, contentType: 'video/webm' });
+        const start = Number(range[1]);
+        const end = range[2] ? Math.min(Number(range[2]), fixture.length - 1) : fixture.length - 1;
+        return route.fulfill({
+          status: 206,
+          headers: {
+            'accept-ranges': 'bytes',
+            'content-range': `bytes ${start}-${end}/${fixture.length}`,
+          },
+          body: fixture.subarray(start, end + 1),
+          contentType: 'video/webm',
+        });
+      });
+    }
+    await createRoom(host);
+    await host.locator('[data-source="link"]').click();
+    await host
+      .locator('#urlInput')
+      .fill(
+        'https://mdn.github.io/learning-area/html/multimedia-and-embedding/video-and-audio-content/multiple-video-formats.html',
+      );
+    await host.getByRole('button', { name: 'Найти видео на странице' }).click();
+    await host.locator('#discoveryResults button').filter({ hasText: 'WEBM' }).click();
+    await expect(host.locator('#mediaTitleInput')).toHaveValue('Static HTML example');
+    await host.locator('#mediaSubmit').click();
+    await expect(host.locator('#queueList')).toContainText('Static HTML example');
+    const video = (page) => page.locator('#mediaMount video');
+    await expect.poll(() => video(host).evaluate((el) => el.readyState)).toBeGreaterThan(1);
+    await video(host).evaluate((el) => {
+      el.currentTime = 3;
+      return el.play();
+    });
+    await joinRoom(guest, host.url());
+    await expect
+      .poll(() => video(guest).evaluate((el) => !el.paused && el.currentTime > 2))
+      .toBe(true);
+    await video(guest).evaluate((el) => el.pause());
+    await expect.poll(() => video(host).evaluate((el) => el.paused)).toBe(true);
+    await video(guest).evaluate((el) => {
+      el.currentTime = 8;
+    });
+    await expect
+      .poll(() => video(host).evaluate((el) => Math.abs(el.currentTime - 8)))
+      .toBeLessThan(0.6);
+  } finally {
+    await hostContext.close();
+    await guestContext.close();
   }
 });

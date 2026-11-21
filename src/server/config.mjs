@@ -1,4 +1,5 @@
 import path from 'node:path';
+import { discoveryHosts } from './page-discovery.mjs';
 
 function integer(value, fallback, min, max) {
   const n = Number(value ?? fallback);
@@ -27,6 +28,7 @@ export function configuration(env = process.env) {
     host: env.HOST || '127.0.0.1',
     port: integer(env.PORT, 3000, 0, 65535),
     publicOrigin,
+    discoveryHosts: discoveryHosts(env.DISCOVERY_HOSTS),
     allowedHosts: new Set(
       (env.ALLOWED_HOSTS || 'localhost,127.0.0.1,[::1]')
         .split(',')

@@ -32,6 +32,7 @@ export function createFixedHostFetcher({
   dnsTimeoutMs = 8000,
   responseTimeoutMs = 12000,
   maxResponseBytes = 2 * 1024 * 1024,
+  verifyContentType,
 } = {}) {
   return async function readPage(pathname) {
     if (!allowedPath.test(pathname)) throw new AppError(400, 'Недопустимый путь источника.');
@@ -51,6 +52,7 @@ export function createFixedHostFetcher({
           hostname,
           path: pathname,
           family: 4,
+          ...(verifyContentType ? { agent: false } : {}),
           method: 'GET',
           lookup: (_host, options, callback) =>
             options.all ? callback(null, [addresses[0]]) : callback(null, addresses[0].address, 4),
@@ -64,6 +66,10 @@ export function createFixedHostFetcher({
                 `${label} ответил ${res.statusCode}; повторите позже или вставьте код плеера.`,
               ),
             );
+            return;
+          }
+          if (verifyContentType && !verifyContentType.test(res.headers['content-type'] ?? '')) {
+            req.destroy(new AppError(415, 'По этому адресу не HTML-страница.'));
             return;
           }
           let size = 0;

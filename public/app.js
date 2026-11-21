@@ -3,6 +3,7 @@ import { createRoulette } from './roulette.js';
 import { createSchedule } from './schedule.js';
 import { mediaArtwork } from './artwork.js';
 import { createSourceSearch } from './search.js';
+import { createPageDiscovery } from './page-discovery.js';
 const $ = (selector) => document.querySelector(selector);
 const $$ = (selector) => [...document.querySelectorAll(selector)];
 const routeId = () => location.pathname.match(/^\/room\/([a-f0-9]{32})\/?$/)?.[1];
@@ -223,6 +224,8 @@ function openAdd(type = 'file', nominate = false) {
   }
   selectedSource = type;
   resetDiagnosis();
+  pageDiscovery.reset();
+  $('#discoverSourceButton').hidden = type !== 'link';
   $('#searchFields').hidden = type !== 'search';
   $('#mediaForm').hidden = type === 'search';
 
@@ -1048,6 +1051,16 @@ const roulette = createRoulette({
 $('#rouletteButton').addEventListener('click', () => {
   if (!room) return toast('Сначала войдите в комнату');
   roulette.open();
+});
+
+const pageDiscovery = createPageDiscovery({
+  request: (url, signal) => roomApi('/source/discover', { url }, 'POST', signal),
+  canSearch: () => Boolean(room),
+  choose(url, title) {
+    resetDiagnosis();
+    $('#urlInput').value = url;
+    if (title && !$('#mediaTitleInput').value.trim()) $('#mediaTitleInput').value = title;
+  },
 });
 
 createSourceSearch({

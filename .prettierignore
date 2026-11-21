@@ -7,6 +7,3 @@ playwright-report/
 test-results/
 
 tests/fixtures/hls/*.ts
-
-# User-maintained execution instructions, preserved verbatim.
-CODEX_SYNCPLAYER_ROADMAP.md

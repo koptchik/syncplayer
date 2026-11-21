@@ -2416,3 +2416,18 @@ dialog {
   color: #bda0e9;
   font-size: 10px;
 }
+
+.discovery-results {
+  display: grid;
+  gap: 8px;
+  max-height: 30dvh;
+  overflow: auto;
+}
+.discovery-results .small-button {
+  margin: 0;
+  text-align: left;
+  overflow-wrap: anywhere;
+}
+#discoveryStatus:empty {
+  display: none;
+}
