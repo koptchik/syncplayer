@@ -396,6 +396,8 @@ test('a host pins the room and leaves; the guest becomes host and can rejoin wit
     await joinRoom(guest, url);
     await expect(guest.locator('#permanentButton')).not.toBeVisible();
     await host.locator('#permanentButton').click();
+    await host.locator('#ownerPassword').fill('test room owner password');
+    await host.locator('#ownerSubmit').click();
     await expect(host.locator('#roomBadge')).toHaveText('ПОСТОЯННАЯ КОМНАТА');
     await host.locator('#leaveButton').click();
     await expect(host).toHaveURL(/\/$/);
@@ -411,6 +413,17 @@ test('a host pins the room and leaves; the guest becomes host and can rejoin wit
     await expect(host.locator('#roomBadge')).toHaveText('ПОСТОЯННАЯ КОМНАТА');
     await host.locator('#profileButton').click();
     await expect(host.locator('#toast')).toContainText('ведущий');
+
+    // The original owner closes the room from the invitation in a fresh browser session.
+    await guest.goto(url);
+    await guest.locator('#invitedOwnerButton').click();
+    await guest.locator('#ownerName').fill('Аня');
+    await guest.locator('#ownerPassword').fill('test room owner password');
+    await guest.locator('#ownerSubmit').click();
+    await expect(guest).toHaveURL(/\/$/);
+    await expect(host.locator('#roomBadge')).toHaveText('КОМНАТА ЗАКРЫТА');
+    await host.reload();
+    await expect(host.locator('#roomDialogTitle')).toHaveText('Создать комнату');
   } finally {
     await a.close();
     await b.close();

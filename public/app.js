@@ -32,6 +32,7 @@ let optionsRequestId = 0;
 let optionsLoading = false;
 let sourceSignature = '';
 let leaving = false;
+let pinning = false;
 const seenMessages = new Set();
 function storedName() {
   try {
@@ -153,6 +154,21 @@ async function flushControl() {
     }
   }
 }
+function updatePermanentPassword() {
+  const enabled = !joining && $('#permanentInput').checked;
+  $('#permanentPasswordLabel').hidden = !enabled;
+  $('#permanentPassword').required = enabled;
+  $('#permanentPassword').disabled = !enabled;
+  if (!enabled) $('#permanentPassword').value = '';
+}
+function forgetPermanentRoom(id) {
+  try {
+    if (localStorage.getItem('syncplayerPermanentRoom') === id)
+      localStorage.removeItem('syncplayerPermanentRoom');
+  } catch {
+    /* Storage may be disabled. */
+  }
+}
 function showRoomDialog(join = false) {
   if (roomUnavailable) join = false;
   joining = join;
@@ -165,6 +181,8 @@ function showRoomDialog(join = false) {
   $('#roomSubmit').textContent = join ? 'Войти в комнату' : 'Создать комнату ↗';
   $('#titleLabel').hidden = join;
   $('#permanentLabel').hidden = join;
+  $('#invitedOwnerButton').hidden = !join;
+  updatePermanentPassword();
   $('#titleInput').required = !join;
   $('#nameInput').value = storedName();
   $('#roomError').textContent = '';
@@ -173,6 +191,7 @@ function showRoomDialog(join = false) {
 function recoverMissingRoom() {
   const name = $('#nameInput').value;
   roomUnavailable = true;
+  forgetPermanentRoom(routeId());
   connected = false;
   pendingControl = null;
   clearTimeout(controlTimer);
@@ -188,6 +207,7 @@ function recoverMissingRoom() {
   $('#scheduleButton').hidden = true;
   $('#nextMeeting').hidden = true;
   $('#permanentButton').hidden = true;
+  $('#manageOwnerButton').hidden = true;
   mediaGeneration++;
   player.load(null);
   $('#playerEmpty').hidden = false;
@@ -208,7 +228,13 @@ function recoverMissingRoom() {
   $('#roomBadge').textContent = 'КОМНАТА ЗАКРЫТА';
   $('#inviteButton span').textContent = 'Создать комнату';
   $('#inviteButton use').setAttribute('href', '#i-plus');
-  for (const id of ['#inviteDialog', '#addDialog', '#rouletteDialog', '#scheduleDialog']) {
+  for (const id of [
+    '#inviteDialog',
+    '#addDialog',
+    '#rouletteDialog',
+    '#scheduleDialog',
+    '#ownerDialog',
+  ]) {
     if ($(id).open) $(id).close();
   }
   notice('Прежнее приглашение больше не действует. Для новой комнаты будет создана новая ссылка.');
@@ -423,7 +449,8 @@ async function receive(nextRoom) {
       /* Private browsing can disable storage. */
     }
   }
-  $('#permanentButton').hidden = !room.me.isHost || room.permanent;
+  $('#permanentButton').hidden = !room.me.canPin;
+  $('#manageOwnerButton').hidden = !room.permanent;
   $('#syncStatus').textContent = 'Управляют все участники';
   const media = activeMedia();
   $('#syncStatus').textContent = media?.manual
@@ -513,6 +540,7 @@ function connect() {
   };
   ws.onerror = () => {};
 }
+$('#permanentInput').addEventListener('change', updatePermanentPassword);
 $('#roomForm').addEventListener('submit', async (event) => {
   event.preventDefault();
   const name = $('#nameInput').value.trim();
@@ -526,6 +554,7 @@ $('#roomForm').addEventListener('submit', async (event) => {
           name,
           title: $('#titleInput').value.trim(),
           permanent: $('#permanentInput').checked,
+          ...($('#permanentInput').checked ? { password: $('#permanentPassword').value } : {}),
         });
     if (socket) {
       socket.onclose = null;
@@ -570,6 +599,7 @@ $$('[data-close]').forEach((button) =>
   button.addEventListener('click', () => $(`#${button.dataset.close}`).close()),
 );
 $('#roomDialog').addEventListener('close', () => {
+  $('#permanentPassword').value = '';
   if (!room) pendingSource = null;
 });
 $('#copyInvite').addEventListener('click', async () => {
@@ -850,12 +880,50 @@ for (const button of $$('.mobile-tabs button')) {
   });
 }
 
-$('#permanentButton').addEventListener('click', async () => {
+function showOwnerDialog(pin) {
+  pinning = pin;
+  $('#ownerForm').reset();
+  $('#ownerName').value = room?.me.name || storedName();
+  $('#ownerName').disabled = pin;
+  $('#ownerNameLabel').hidden = pin;
+  $('#ownerPassword').autocomplete = pin ? 'new-password' : 'current-password';
+  $('#ownerHeading').textContent = pin ? 'Закрепить комнату' : 'Управление постоянной комнатой';
+  $('#ownerDescription').textContent = pin
+    ? `Ваш ник владельца — ${room.me.name}. Запомните пароль для закрытия комнаты после выхода.`
+    : 'Закрытие удалит очередь, чат и загруженные видео. Ссылка больше не будет действовать.';
+  $('#ownerSubmit').textContent = pin ? 'Закрепить' : 'Закрыть комнату';
+  $('#ownerError').textContent = '';
+  $('#ownerDialog').showModal();
+}
+$('#permanentButton').addEventListener('click', () => showOwnerDialog(true));
+$('#manageOwnerButton').addEventListener('click', () => showOwnerDialog(false));
+$('#invitedOwnerButton').addEventListener('click', () => showOwnerDialog(false));
+$('#ownerDialog').addEventListener('close', () => {
+  $('#ownerPassword').value = '';
+});
+$('#ownerForm').addEventListener('submit', async (event) => {
+  event.preventDefault();
+  $('#ownerSubmit').disabled = true;
+  $('#ownerError').textContent = '';
+  const password = $('#ownerPassword').value;
+  const id = room?.id || routeId();
   try {
-    await receive(await roomApi('/permanent', {}));
-    toast('Комната закреплена. Ссылка сохранится после перезапуска.');
+    if (pinning) {
+      await receive(await roomApi('/permanent', { password }));
+      $('#ownerDialog').close();
+      toast('Комната закреплена. Ссылка сохранится после перезапуска.');
+    } else {
+      leaving = true;
+      await api(`/api/rooms/${id}/owner/close`, { name: $('#ownerName').value, password });
+      forgetPermanentRoom(id);
+      location.replace('/');
+    }
   } catch (error) {
-    toast(error.message);
+    leaving = false;
+    $('#ownerError').textContent = error.message;
+    if (room && !connected) connect();
+  } finally {
+    $('#ownerSubmit').disabled = false;
   }
 });
 $('#leaveButton').addEventListener('click', async () => {

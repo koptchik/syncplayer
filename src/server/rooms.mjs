@@ -1,7 +1,7 @@
 import { randomBytes, randomInt, createHash } from 'node:crypto';
 import { performance } from 'node:perf_hooks';
 import { AppError } from './validation.mjs';
-import { readFileSync, writeFileSync, renameSync } from 'node:fs';
+import { readFileSync, writeFileSync, renameSync, unlinkSync } from 'node:fs';
 import path from 'node:path';
 
 export const randomId = () => randomBytes(16).toString('hex');
@@ -15,9 +15,7 @@ export class RoomStore {
   loadPermanent() {
     let saved;
     try {
-      saved = JSON.parse(
-        readFileSync(path.join(this.config.dataDir, 'permanent-room.json'), 'utf8'),
-      );
+      saved = JSON.parse(readFileSync(this.permanentFilename(), 'utf8'));
     } catch (error) {
       if (error.code === 'ENOENT') return;
       throw error;
@@ -49,20 +47,31 @@ export class RoomStore {
       playing: false,
       updatedAt: Date.now(),
     };
-    const filename = path.join(this.config.dataDir, 'permanent-room.json');
+    const filename = this.permanentFilename();
     writeFileSync(`${filename}.tmp`, JSON.stringify({ version: 1, room: data }), {
       mode: 0o600,
       flush: true,
     });
     renameSync(`${filename}.tmp`, filename);
   }
-  makePermanent(room) {
+  permanentFilename() {
+    return path.join(this.config.dataDir, 'permanent-room.json');
+  }
+  canPin(room, member) {
+    if (room.permanent) throw new AppError(409, 'Комната уже закреплена.');
+    this.host(room, member);
+    if (member.id !== room.creatorId)
+      throw new AppError(403, 'Закрепить комнату может только её создатель.');
+  }
+  makePermanent(room, owner) {
+    if (!owner) throw new TypeError('A permanent room requires an owner profile');
     if (
       [...this.rooms.values()].some((candidate) => candidate.permanent && candidate.id !== room.id)
     )
       throw new AppError(409, 'На сервере уже есть постоянная комната.');
-    const previous = { permanent: room.permanent, expiresAt: room.expiresAt };
+    const previous = { permanent: room.permanent, expiresAt: room.expiresAt, owner: room.owner };
     room.permanent = true;
+    room.owner = owner;
     room.expiresAt = Number.MAX_SAFE_INTEGER;
     try {
       this.persist(room);
@@ -70,6 +79,15 @@ export class RoomStore {
       Object.assign(room, previous);
       throw error;
     }
+  }
+  closePermanent(room) {
+    if (room.uploading) throw new AppError(409, 'Дождитесь завершения загрузки видео.');
+    unlinkSync(this.permanentFilename());
+    room.permanent = false;
+    room.expiresAt = 0;
+    room.members.clear();
+    this.rooms.delete(room.id);
+    for (const socket of room.sockets) socket.close(1008, 'Room closed');
   }
   leave(room, member) {
     for (const [hash, value] of room.members) if (value.id === member.id) room.members.delete(hash);
@@ -90,7 +108,7 @@ export class RoomStore {
     }
     room.revision++;
   }
-  create({ name, title, permanent = false }) {
+  create({ name, title, permanent = false }, owner) {
     if (this.rooms.size >= this.config.maxRooms)
       throw new AppError(503, 'Сервер заполнен. Попробуйте позже.');
     const room = {
@@ -110,11 +128,12 @@ export class RoomStore {
     };
     const session = this.join(room, name);
     room.hostId = session.member.id;
+    room.creatorId = session.member.id;
     room.controllerId = session.member.id;
     this.rooms.set(room.id, room);
     if (permanent) {
       try {
-        this.makePermanent(room);
+        this.makePermanent(room, owner);
       } catch (error) {
         this.rooms.delete(room.id);
         throw error;
@@ -280,7 +299,12 @@ export class RoomStore {
       revision: room.revision,
       playbackRevision: room.playbackRevision,
       controllerId: room.controllerId,
-      me: { id: member.id, name: member.name, isHost: member.id === room.hostId },
+      me: {
+        id: member.id,
+        name: member.name,
+        isHost: member.id === room.hostId,
+        canPin: !room.permanent && member.id === room.creatorId && member.id === room.hostId,
+      },
       members: [...room.members.values()].map((m) => ({
         id: m.id,
         name: m.name,

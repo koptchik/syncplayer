@@ -36,6 +36,7 @@ test('members propose and vote; host confirms and starts queued films or a roule
         name: 'Host',
         title: 'Schedule',
         permanent: true,
+        password: 'temporary test password',
       }),
       host = created.cookie,
       root = '/api/rooms/' + created.body.id;

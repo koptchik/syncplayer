@@ -93,6 +93,7 @@
             <button id="scheduleButton" class="small-button" hidden>Расписание</button>
             <button id="returnRoomButton" class="small-button" hidden>Постоянная комната</button>
             <button id="permanentButton" class="small-button" hidden>Закрепить комнату</button>
+            <button id="manageOwnerButton" class="small-button" hidden>Владельцу</button>
             <button id="leaveButton" class="small-button" hidden>Выйти</button>
             <button class="primary" id="inviteButton">
               <svg><use href="#i-plus" /></svg><span>Создать комнату</span>
@@ -310,10 +311,44 @@
           ><input type="checkbox" id="permanentInput" />Постоянная комната — сохранится после
           перезапуска (одна на сервер)</label
         >
+        <label id="permanentPasswordLabel" hidden
+          >Пароль владельца<input
+            type="password"
+            id="permanentPassword"
+            minlength="12"
+            maxlength="128"
+            autocomplete="new-password"
+            disabled
+          />
+        </label>
         <p id="roomError" class="form-error" role="alert"></p>
         <button class="primary" id="roomSubmit">
           Создать комнату <svg><use href="#i-arrow" /></svg>
         </button>
+        <button type="button" id="invitedOwnerButton" class="small-button" hidden>
+          Владельцу комнаты
+        </button>
+      </form>
+    </dialog>
+    <dialog id="ownerDialog">
+      <button type="button" class="close" data-close="ownerDialog" aria-label="Закрыть">×</button>
+      <form id="ownerForm">
+        <h2 id="ownerHeading"></h2>
+        <p id="ownerDescription"></p>
+        <label id="ownerNameLabel"
+          >Ник владельца<input id="ownerName" maxlength="40" required autocomplete="username" />
+        </label>
+        <label
+          >Пароль владельца<input
+            id="ownerPassword"
+            type="password"
+            minlength="12"
+            maxlength="128"
+            required
+          />
+        </label>
+        <p id="ownerError" class="form-error" role="alert"></p>
+        <button class="primary" id="ownerSubmit"></button>
       </form>
     </dialog>
     <dialog id="addDialog">

@@ -7,6 +7,7 @@ export const createSchema = z
     name,
     title: z.string().trim().min(1).max(80),
     permanent: z.boolean().optional().default(false),
+    password: z.string().max(128).optional(),
   })
   .strict();
 export const joinSchema = z.object({ name }).strict();

@@ -11,6 +11,7 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { ZodError } from 'zod';
 import { RoomStore, randomId } from './rooms.mjs';
+import { createOwner, ownerLogin, ownerPassword, verifyOwner } from './room-owner.mjs';
 import { createYummyResolver, catalogMedia, yummyPath } from './yummy.mjs';
 import { createSourceResolver, isCatalogSource, isLordfilmSource } from './sources.mjs';
 import { createPageDiscovery } from './page-discovery.mjs';
@@ -163,6 +164,7 @@ export async function createApplication(
     });
   const roomLimiter = limiter(60000, 20);
   const joinLimiter = limiter(60000, 60);
+  const ownerLimiter = limiter(60000, 10);
   const chatLimiter = limiter(10000, 15);
   const controlLimiter = limiter(60000, 150);
   const mutationLimiter = limiter(60000, 60);
@@ -187,8 +189,18 @@ export async function createApplication(
       maxAge: room.permanent ? 30 * 86400000 : Math.max(0, room.expiresAt - Date.now()),
     });
   }
-  app.post('/api/rooms', roomLimiter, (req, res) => {
-    const { room, token, member } = store.create(createSchema.parse(req.body));
+  function clearSession(req, res, room) {
+    res.clearCookie(cookieName, {
+      path: `/api/rooms/${room.id}`,
+      httpOnly: true,
+      sameSite: 'strict',
+      secure: req.accessOrigin.startsWith('https:'),
+    });
+  }
+  app.post('/api/rooms', roomLimiter, async (req, res) => {
+    const { name, title, permanent, password } = createSchema.parse(req.body);
+    const owner = permanent ? await createOwner(name, ownerPassword.parse(password)) : undefined;
+    const { room, token, member } = store.create({ name, title, permanent }, owner);
     setSession(req, res, room, token);
     res.status(201).json(store.snapshot(room, member));
   });
@@ -205,6 +217,19 @@ export async function createApplication(
     }
     store.broadcast(room);
     res.json(store.snapshot(room, member));
+  });
+  app.post('/api/rooms/:id/owner/close', ownerLimiter, async (req, res) => {
+    const room = store.get(idSchema.parse(req.params.id));
+    if (!room.permanent) throw new AppError(404, 'Постоянная комната не найдена.');
+    if (!room.owner)
+      throw new AppError(409, 'Для этой комнаты администратор сервера должен назначить владельца.');
+    if (!(await verifyOwner(room.owner, ownerLogin.parse(req.body))))
+      throw new AppError(403, 'Неверный ник или пароль владельца.');
+    store.get(room.id);
+    store.closePermanent(room);
+    clearSession(req, res, room);
+    await Promise.all(room.queue.map(deleteFile));
+    res.json({ ok: true });
   });
   app.use('/api/rooms/:id', (req, _res, next) => {
     try {
@@ -291,20 +316,19 @@ export async function createApplication(
     store.broadcast(req.room);
     res.json(store.snapshot(req.room, req.member));
   });
-  app.post('/api/rooms/:id/permanent', hostOnly, mutationLimiter, (req, res) => {
-    store.makePermanent(req.room);
+  app.post('/api/rooms/:id/permanent', mutationLimiter, async (req, res) => {
+    store.canPin(req.room, req.member);
+    const owner = await createOwner(req.member.name, ownerPassword.parse(req.body?.password));
+    store.get(req.room.id);
+    store.canPin(req.room, store.authenticate(req.room, sessionToken(req)));
+    store.makePermanent(req.room, owner);
     setSession(req, res, req.room, sessionToken(req));
     store.broadcast(req.room);
     res.json(store.snapshot(req.room, req.member));
   });
   app.post('/api/rooms/:id/leave', mutationLimiter, (req, res) => {
     store.leave(req.room, req.member);
-    res.clearCookie(cookieName, {
-      path: `/api/rooms/${req.room.id}`,
-      httpOnly: true,
-      sameSite: 'strict',
-      secure: req.accessOrigin.startsWith('https:'),
-    });
+    clearSession(req, res, req.room);
     store.broadcast(req.room);
     res.json({ ok: true });
   });
@@ -373,7 +397,12 @@ export async function createApplication(
       await unlink(path.join(uploadDir, media.diskName));
       usedBytes = Math.max(0, usedBytes - media.bytes);
     } catch (error) {
-      if (error.code !== 'ENOENT') console.error('Could not remove expired media:', error.code);
+      if (error.code === 'ENOENT') {
+        usedBytes = Math.max(0, usedBytes - media.bytes);
+        return;
+      }
+      orphanFiles.set(media.diskName, { size: media.bytes, expiresAt: Date.now() + 60000 });
+      console.error('Could not remove expired media:', error.code);
     }
   }
   app.delete('/api/rooms/:id/media/:mediaId', hostOnly, mutationLimiter, async (req, res) => {
@@ -600,6 +629,7 @@ export async function createApplication(
       room.sockets.delete(ws);
       member.connections--;
       member.lastSeen = Date.now();
+      if (!store.rooms.has(room.id)) return;
       if (member.id === room.controllerId && member.connections === 0) {
         const next = [...room.members.values()].find((candidate) => candidate.connections > 0);
         if (next) {
@@ -639,9 +669,8 @@ export async function createApplication(
       }
       for (const [name, info] of orphanFiles) {
         if (info.expiresAt > Date.now()) continue;
-        await unlink(path.join(uploadDir, name)).catch(() => {});
-        usedBytes = Math.max(0, usedBytes - info.size);
-        orphanFiles.delete(name);
+        await deleteFile({ diskName: name, bytes: info.size });
+        if (orphanFiles.get(name) === info) orphanFiles.delete(name);
       }
     } finally {
       cleaning = false;

@@ -1,5 +1,9 @@
 # Security notes
 
+## Permanent room owners
+
+The room creator sets the owner's password when making a room permanent. The server stores a salted scrypt hash in the private room state. Closing a room requires its owner's nickname and password, a same-origin request, and a rate-limited password check. The owner profile is separate from room sessions and is omitted from API responses. Legacy rooms require administrator recovery in the LXC console.
+
 ## Access model
 
 Rooms use cryptographically random 128-bit invitation IDs. Anyone with an invitation can join. Each member receives a separate 256-bit session token in a room-scoped, HttpOnly, SameSite=Strict cookie. Only a SHA-256 digest is stored server-side. Requests through the configured public HTTPS origin set Secure cookies; explicit ALLOWED_HOSTS remain available over local HTTP with host-scoped non-Secure cookies. Sessions are independent across hostnames. Room membership is checked for uploads and queue additions; host authority is required for removal. Any authenticated room member may control playback or select a queued video. The last accepted user command wins; stale background checkpoints cannot overwrite it.

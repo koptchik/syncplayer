@@ -36,7 +36,12 @@ test('catalog switches keep a single queue item, reject stale commands and survi
   };
   try {
     await start();
-    const made = await call('/api/rooms', null, { name: 'Host', title: 'Room', permanent: true });
+    const made = await call('/api/rooms', null, {
+      name: 'Host',
+      title: 'Room',
+      permanent: true,
+      password: 'temporary test password',
+    });
     const root = `/api/rooms/${made.body.id}`,
       host = made.cookie;
     const guest = (await call(`${root}/join`, null, { name: 'Guest' })).cookie;

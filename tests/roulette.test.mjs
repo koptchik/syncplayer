@@ -10,11 +10,14 @@ test('roulette accepts member proposals, locks a fair distinct draw and persists
   const dir = await mkdtemp(path.join(tmpdir(), 'syncplayer-roulette-'));
   try {
     const store = new RoomStore(configuration({ DATA_DIR: dir }));
-    const { room, member: host } = store.create({
-      name: 'Host',
-      title: 'Roulette',
-      permanent: true,
-    });
+    const { room, member: host } = store.create(
+      {
+        name: 'Host',
+        title: 'Roulette',
+        permanent: true,
+      },
+      { name: 'Host' },
+    );
     const { member: guest } = store.join(room, 'Guest');
     const items = Array.from({ length: 4 }, (_, i) =>
       store.add(room, {

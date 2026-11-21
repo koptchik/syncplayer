@@ -1,10 +1,15 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdtemp, rm, readFile, utimes, stat } from 'node:fs/promises';
+import { mkdtemp, rm, readFile, writeFile, utimes, stat } from 'node:fs/promises';
+import { execFile } from 'node:child_process';
+import { promisify } from 'node:util';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { createApplication } from './helpers/application.mjs';
 import { configuration } from '../src/server/config.mjs';
+
+const password = 'temporary test password';
+const run = promisify(execFile);
 
 test('one permanent room survives restart with sessions, queue, chat and protected uploads; leaving revokes membership', async () => {
   const dir = await mkdtemp(path.join(tmpdir(), 'syncplayer-persist-'));
@@ -16,11 +21,14 @@ test('one permanent room survives restart with sessions, queue, chat and protect
     await new Promise((resolve) => app.server.listen(0, '127.0.0.1', resolve));
     base = `http://127.0.0.1:${app.server.address().port}`;
   };
-  const call = async (endpoint, { cookie, data, method = data ? 'POST' : 'GET', body } = {}) => {
+  const call = async (
+    endpoint,
+    { cookie, data, method = data ? 'POST' : 'GET', body, origin } = {},
+  ) => {
     const response = await fetch(base + endpoint, {
       method,
       headers: {
-        Origin: base,
+        Origin: origin ?? base,
         ...(cookie ? { Cookie: cookie } : {}),
         ...(data ? { 'Content-Type': 'application/json' } : {}),
       },
@@ -45,12 +53,15 @@ test('one permanent room survives restart with sessions, queue, chat and protect
       403,
     );
     assert.equal(
-      (await call(`${endpoint}/permanent`, { cookie: host, data: {} })).body.permanent,
+      (await call(`${endpoint}/permanent`, { cookie: host, data: { password } })).body.permanent,
       true,
     );
     assert.equal(
-      (await call('/api/rooms', { data: { name: 'Other', title: 'Other', permanent: true } }))
-        .response.status,
+      (
+        await call('/api/rooms', {
+          data: { name: 'Other', title: 'Other', permanent: true, password },
+        })
+      ).response.status,
       409,
     );
     const form = new FormData();
@@ -66,6 +77,8 @@ test('one permanent room survives restart with sessions, queue, chat and protect
     assert.equal(stored.room.messages[0].text, 'Saved message');
     assert.equal(stored.room.queue.length, 1);
     assert.equal(JSON.stringify(stored).includes(host.split('=')[1]), false);
+    assert.equal(JSON.stringify(stored).includes(password), false);
+    assert.equal(stored.room.owner.name, 'Host');
     assert.equal((await stat(path.join(dir, 'permanent-room.json'))).mode & 0o077, 0);
     const filename = path.join(dir, 'uploads', stored.room.queue[0].diskName);
     await utimes(filename, new Date(0), new Date(0));
@@ -80,6 +93,7 @@ test('one permanent room survives restart with sessions, queue, chat and protect
     assert.ok(restored.body.playback.position >= 30);
     assert.equal(restored.body.messages[0].text, 'Saved message');
     assert.equal(restored.body.members.length, 2);
+    assert.equal(restored.body.owner, undefined);
     assert.equal(await readFile(filename, 'utf8'), 'sample');
     assert.equal(
       (await fetch(`${base}${endpoint}/media/${upload.body.id}`, { headers: { Cookie: guest } }))
@@ -96,6 +110,64 @@ test('one permanent room survives restart with sessions, queue, chat and protect
     assert.equal(next.body.id, id);
     assert.equal(next.body.me.isHost, true);
     assert.equal(next.body.members.length, 1);
+    const close = `${endpoint}/owner/close`;
+    const good = { name: 'Host', password };
+    assert.equal(
+      (await call(close, { data: good, origin: 'https://other.example.org' })).response.status,
+      403,
+    );
+    assert.equal(
+      (
+        await call(close, {
+          cookie: next.cookie,
+          data: { name: 'Host', password: 'incorrect password' },
+        })
+      ).response.status,
+      403,
+    );
+    assert.equal(
+      (await call(close, { data: { name: 'New host', password } })).response.status,
+      403,
+    );
+    assert.equal((await call(close, { data: good })).response.status, 200);
+    assert.equal((await call(endpoint, { cookie: next.cookie })).response.status, 404);
+    await assert.rejects(stat(filename), { code: 'ENOENT' });
+    await app.close();
+    await start();
+    assert.equal((await call(endpoint, { cookie: next.cookie })).response.status, 404);
+
+    // Simulate a room persisted by a release before owner profiles existed.
+    delete stored.room.owner;
+    delete stored.room.creatorId;
+    const permanentFile = path.join(dir, 'permanent-room.json');
+    await app.close();
+    await writeFile(permanentFile, JSON.stringify(stored), { mode: 0o600 });
+    await start();
+    assert.equal((await call(close, { data: good })).response.status, 409);
+    await app.close();
+    const { stdout } = await run(process.execPath, ['deploy/recover-room.mjs', 'Recovered'], {
+      env: { ...process.env, DATA_DIR: dir, PUBLIC_ORIGIN: 'https://stream.example.org' },
+    });
+    const recoveredPassword = /^Password: (\S+)$/m.exec(stdout)?.[1];
+    assert.equal(recoveredPassword?.length, 32);
+    await assert.rejects(
+      run(process.execPath, ['deploy/recover-room.mjs', 'Someone else'], {
+        env: { ...process.env, DATA_DIR: dir },
+      }),
+      /already has an owner/,
+    );
+    await start();
+    assert.equal((await call(close, { data: good })).response.status, 403);
+    assert.equal(
+      (await call(close, { data: { name: 'Recovered', password: recoveredPassword } })).response
+        .status,
+      200,
+    );
+    const replacement = await call('/api/rooms', {
+      data: { ...good, title: 'New permanent', permanent: true },
+    });
+    assert.equal(replacement.response.status, 201);
+    assert.notEqual(replacement.body.id, id);
   } finally {
     await app?.close();
     await rm(dir, { recursive: true, force: true });
