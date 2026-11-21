@@ -38,6 +38,7 @@ export function configuration(env = process.env) {
     dataDir: path.resolve(env.DATA_DIR || '.data'),
     maxFileBytes: integer(env.MAX_FILE_BYTES, 4 * 1024 ** 3, 1, 100 * 1024 ** 3),
     maxStorageBytes: integer(env.MAX_STORAGE_BYTES, 10 * 1024 ** 3, 1, 1024 ** 4),
+    minFreeStorageBytes: integer(env.MIN_FREE_STORAGE_BYTES, 512 * 1024 ** 2, 0, 1024 ** 4),
     roomTtlMs: integer(env.ROOM_TTL_HOURS, 24, 1, 168) * 3600000,
     maxRooms: 100,
     maxMembers: 32,

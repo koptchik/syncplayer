@@ -5,12 +5,13 @@ import Busboy from 'busboy';
 import { WebSocketServer } from 'ws';
 import { createServer } from 'node:http';
 import { createWriteStream } from 'node:fs';
-import { mkdir, readdir, stat, unlink } from 'node:fs/promises';
+import { rename } from 'node:fs/promises';
 import { pipeline } from 'node:stream/promises';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { ZodError } from 'zod';
 import { RoomStore, randomId } from './rooms.mjs';
+import { openUploads, uploadMimeTypes } from './uploads.mjs';
 import { createOwner, ownerLogin, ownerPassword, verifyOwner } from './room-owner.mjs';
 import { createYummyResolver, catalogMedia, yummyPath } from './yummy.mjs';
 import { createSourceResolver, isCatalogSource, isLordfilmSource } from './sources.mjs';
@@ -29,13 +30,6 @@ import {
 } from './validation.mjs';
 
 const publicDir = fileURLToPath(new URL('../../public/', import.meta.url));
-const mimeTypes = {
-  '.mp4': 'video/mp4',
-  '.m4v': 'video/mp4',
-  '.webm': 'video/webm',
-  '.mov': 'video/quicktime',
-  '.mkv': 'video/x-matroska',
-};
 const cookieName = 'sp_session';
 function sessionToken(req) {
   const value = req.headers.cookie
@@ -58,21 +52,8 @@ export async function createApplication(
   const app = express();
   const server = createServer(app);
   const store = new RoomStore(config);
-  const uploadDir = path.join(config.dataDir, 'uploads');
-  await mkdir(uploadDir, { recursive: true, mode: 0o700 });
   store.loadPermanent();
-  let usedBytes = 0;
-  let reservedBytes = 0;
-  let activeUploads = 0;
-  const orphanFiles = new Map();
-  for (const name of await readdir(uploadDir)) {
-    if (!/^[a-f0-9]{32}\.(mp4|webm|m4v|mov|mkv)$/.test(name)) continue;
-    const info = await stat(path.join(uploadDir, name));
-    usedBytes += info.size;
-    orphanFiles.set(name, { size: info.size, expiresAt: info.mtimeMs + config.roomTtlMs });
-  }
-  for (const room of store.rooms.values())
-    for (const media of room.queue) if (media.diskName) orphanFiles.delete(media.diskName);
+  const uploads = await openUploads(config, store.uploadNames());
   app.disable('x-powered-by');
   app.set('trust proxy', false);
   const securityHeaders = (secure) =>
@@ -228,7 +209,7 @@ export async function createApplication(
     store.get(room.id);
     store.closePermanent(room);
     clearSession(req, res, room);
-    await Promise.all(room.queue.map(deleteFile));
+    await Promise.all(room.queue.map(({ diskName }) => uploads.remove(diskName)));
     res.json({ ok: true });
   });
   app.use('/api/rooms/:id', (req, _res, next) => {
@@ -391,20 +372,6 @@ export async function createApplication(
     store.broadcast(req.room);
     res.json({ ok: true });
   });
-  async function deleteFile(media) {
-    if (!media.diskName) return;
-    try {
-      await unlink(path.join(uploadDir, media.diskName));
-      usedBytes = Math.max(0, usedBytes - media.bytes);
-    } catch (error) {
-      if (error.code === 'ENOENT') {
-        usedBytes = Math.max(0, usedBytes - media.bytes);
-        return;
-      }
-      orphanFiles.set(media.diskName, { size: media.bytes, expiresAt: Date.now() + 60000 });
-      console.error('Could not remove expired media:', error.code);
-    }
-  }
   app.delete('/api/rooms/:id/media/:mediaId', hostOnly, mutationLimiter, async (req, res) => {
     store.ensureNotDrawing(req.room);
     const mediaId = idSchema.parse(req.params.mediaId);
@@ -429,7 +396,7 @@ export async function createApplication(
     }
     req.room.revision++;
     store.broadcast(req.room);
-    await deleteFile(media);
+    await uploads.remove(media.diskName);
     res.json({ ok: true });
   });
   app.get('/api/rooms/:id/media/:mediaId', (req, res, next) => {
@@ -439,7 +406,7 @@ export async function createApplication(
     res.set({ 'Cache-Control': 'private, no-store', 'Content-Disposition': 'inline' });
     res.sendFile(
       media.diskName,
-      { root: uploadDir, dotfiles: 'deny', acceptRanges: true },
+      { root: uploads.directory, dotfiles: 'deny', acceptRanges: true },
       (error) => {
         if (error) next(error);
       },
@@ -451,10 +418,7 @@ export async function createApplication(
       throw new AppError(411, 'Не указан размер загрузки.');
     if (size > config.maxFileBytes + 65536)
       throw new AppError(413, 'Файл превышает допустимый размер.');
-    if (usedBytes + reservedBytes + size > config.maxStorageBytes)
-      throw new AppError(507, 'На сервере закончился лимит хранения.');
-    if (req.room.uploading || activeUploads >= 4)
-      throw new AppError(409, 'Дождитесь завершения текущей загрузки.');
+    if (req.room.uploading) throw new AppError(409, 'Дождитесь завершения текущей загрузки.');
     if (req.room.queue.length >= 100) throw new AppError(409, 'Очередь заполнена.');
     let parser;
     try {
@@ -466,10 +430,10 @@ export async function createApplication(
       throw new AppError(400, 'Некорректная загрузка файла.');
     }
     req.room.uploading = true;
-    reservedBytes += size;
-    activeUploads++;
+    let release;
     let media = null;
-    let filepath;
+    let writtenName;
+    let file;
     let problem;
     let finished = false;
     const writes = [];
@@ -477,8 +441,10 @@ export async function createApplication(
       problem ||= error;
     };
     const abort = () => parser.destroy(new Error('Upload aborted'));
-    req.once('aborted', abort);
     try {
+      release = await uploads.reserve(size);
+      if (req.aborted) throw new AppError(400, 'Загрузка прервана.');
+      req.once('aborted', abort);
       await new Promise((resolve, reject) => {
         parser.on('file', (field, stream, info) => {
           const title = [...path.basename(String(info.filename || '').replaceAll('\\', '/'))]
@@ -486,22 +452,30 @@ export async function createApplication(
             .join('')
             .slice(0, 160);
           const ext = path.extname(title).toLowerCase();
-          if (field !== 'video' || !mimeTypes[ext]) {
+          if (field !== 'video' || !uploadMimeTypes[ext]) {
             fail(new AppError(400, 'Выберите видео MP4, WebM, MOV или MKV.'));
             stream.resume();
             return;
           }
           const diskName = `${randomId()}${ext}`;
-          filepath = path.join(uploadDir, diskName);
-          media = { type: 'file', title, diskName, mime: mimeTypes[ext], bytes: 0, live: false };
+          const partial = `${diskName}.part`;
+          media = {
+            type: 'file',
+            title,
+            diskName,
+            mime: uploadMimeTypes[ext],
+            bytes: 0,
+            live: false,
+          };
           stream.on('data', (chunk) => {
             media.bytes += chunk.length;
           });
           stream.on('limit', () => fail(new AppError(413, 'Файл превышает допустимый размер.')));
-          const writing = pipeline(
-            stream,
-            createWriteStream(filepath, { flags: 'wx', mode: 0o600 }),
-          ).catch(fail);
+          file = createWriteStream(uploads.path(partial), { flags: 'wx', mode: 0o600 });
+          file.once('open', () => {
+            writtenName = partial;
+          });
+          const writing = pipeline(stream, file).catch(fail);
           writes.push(writing);
         });
         for (const event of ['filesLimit', 'fieldsLimit', 'partsLimit'])
@@ -515,20 +489,21 @@ export async function createApplication(
       await Promise.all(writes);
       if (problem) throw problem;
       if (!media || !media.bytes) throw new AppError(400, 'Выберите непустой видеофайл.');
+      await rename(uploads.path(writtenName), uploads.path(media.diskName));
+      writtenName = media.diskName;
+      uploads.record(writtenName, file.bytesWritten);
       if (req.room.expiresAt <= Date.now()) throw new AppError(410, 'Срок действия комнаты истёк.');
       store.authenticate(req.room, sessionToken(req));
       const item = store.add(req.room, media);
-      usedBytes += media.bytes;
       finished = true;
       store.broadcast(req.room);
       res.status(201).json({ id: item.id, title: item.title });
     } finally {
       req.off('aborted', abort);
       await Promise.all(writes);
-      if (!finished && filepath) await unlink(filepath).catch(() => {});
+      if (!finished && writtenName) await uploads.remove(writtenName, file.bytesWritten);
       req.room.uploading = false;
-      reservedBytes -= size;
-      activeUploads--;
+      release?.();
     }
   });
   app.use('/api', (_req, res) => res.status(404).json({ error: 'Неизвестный запрос.' }));
@@ -665,13 +640,9 @@ export async function createApplication(
         if (room.expiresAt > Date.now() || room.uploading) continue;
         for (const ws of room.sockets) ws.close(1008, 'Room expired');
         store.rooms.delete(room.id);
-        await Promise.all(room.queue.map(deleteFile));
+        await Promise.all(room.queue.map(({ diskName }) => uploads.remove(diskName)));
       }
-      for (const [name, info] of orphanFiles) {
-        if (info.expiresAt > Date.now()) continue;
-        await deleteFile({ diskName: name, bytes: info.size });
-        if (orphanFiles.get(name) === info) orphanFiles.delete(name);
-      }
+      await uploads.prune();
     } finally {
       cleaning = false;
     }

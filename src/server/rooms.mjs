@@ -54,6 +54,13 @@ export class RoomStore {
     });
     renameSync(`${filename}.tmp`, filename);
   }
+  uploadNames() {
+    return new Set(
+      [...this.rooms.values()].flatMap((room) =>
+        room.queue.filter((media) => media.type === 'file').map((media) => media.diskName),
+      ),
+    );
+  }
   permanentFilename() {
     return path.join(this.config.dataDir, 'permanent-room.json');
   }

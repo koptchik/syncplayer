@@ -9,7 +9,6 @@ CURRENT="$ROOT/current"
 NODE="$ROOT/node/bin/node"
 NPM="$ROOT/node/bin/npm"
 TARGET="${1:-main}"
-HEALTH_URL=http://127.0.0.1:3000/api/health
 export PATH="$ROOT/node/bin:$PATH"
 
 if [[ ! "$TARGET" =~ ^[A-Za-z0-9][A-Za-z0-9._/-]*$ || "$TARGET" == *..* || "$TARGET" == */*/* ]]; then

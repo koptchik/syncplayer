@@ -25,3 +25,22 @@ The command saves a private backup of the room state alongside the active file a
 ## Persistent data
 
 The persistent media path is `/var/lib/syncplayer`. The setup creates the initial env file only when one does not exist; edit it as root to change settings. Deployments restart the process: temporary rooms reset, while the permanent room is restored from `/var/lib/syncplayer/permanent-room.json` with playback paused. Back up this file and uploads together. Rolling back to a release older than permanent-room support will not restore the room and may expire its uploads.
+
+## Inspect or clean upload storage
+
+Run maintenance in the Proxmox root console. The command stops SyncPlayer for an accurate inventory and starts it afterward. Temporary rooms expire on restart. Use `report` for counts and byte totals, `clean-orphans` to remove unreferenced managed uploads, or `close-and-clean` to also permanently delete the room, its state, and its uploads. Unrecognized entries and deliberate backups are excluded.
+
+```bash
+pct exec 100 -- bash -c '
+  set -e
+  systemctl stop syncplayer
+  trap "systemctl start syncplayer" EXIT
+  cd /opt/syncplayer/current
+  runuser -u syncplayer -- /opt/syncplayer/node/bin/node --env-file=/etc/syncplayer.env deploy/storage-maintenance.mjs "$1"
+  systemctl start syncplayer
+  trap - EXIT
+  curl -fsS --retry 8 --retry-connrefused --retry-delay 1 http://127.0.0.1:3000/api/health
+' syncplayer-maintenance report
+```
+
+The application also scans upload storage on startup and runs cleanup each minute. Queue files remain protected while their room exists. After a restart, abandoned `.part` files are removed immediately and unreferenced completed files expire according to `ROOM_TTL_HOURS`. Check `MAX_STORAGE_BYTES` and `MIN_FREE_STORAGE_BYTES` to adjust the application's quota and disk reserve independently.
