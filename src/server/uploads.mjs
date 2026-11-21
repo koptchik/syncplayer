@@ -52,11 +52,14 @@ class UploadStorage {
     return path.join(this.directory, name);
   }
   async reserve(bytes) {
-    const { bavail, bsize } = await statfs(this.directory);
+    const disk = bytes ? await statfs(this.directory) : null;
     if (this.active >= 4) throw new AppError(409, 'Дождитесь завершения текущей загрузки.');
-    if (this.usedBytes + this.reservedBytes + bytes > this.config.maxStorageBytes)
+    if (bytes && this.usedBytes + this.reservedBytes + bytes > this.config.maxStorageBytes)
       throw new AppError(507, 'На сервере закончился лимит хранения.');
-    if (bavail * bsize - this.reservedBytes - bytes < this.config.minFreeStorageBytes)
+    if (
+      disk &&
+      disk.bavail * disk.bsize - this.reservedBytes - bytes < this.config.minFreeStorageBytes
+    )
       throw new AppError(507, 'На диске не хватает свободного места для этой загрузки.');
     this.active++;
     this.reservedBytes += bytes;

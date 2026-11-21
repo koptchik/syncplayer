@@ -183,6 +183,42 @@ test('short paused seeks propagate in both directions without echoing back', asy
   }
 });
 
+test('retrying a chat submission after a lost response adds one message', async ({ browser }) => {
+  const hostContext = await browser.newContext();
+  const guestContext = await browser.newContext();
+  try {
+    const host = await hostContext.newPage();
+    const guest = await guestContext.newPage();
+    await createRoom(host);
+    await joinRoom(guest, host.url());
+    const keys = [];
+    await host.route('**/api/rooms/*/chat', async (route) => {
+      keys.push(route.request().headers()['idempotency-key']);
+      const response = await route.fetch();
+      expect(response.status()).toBe(201);
+      if (keys.length === 1) await route.abort();
+      else await route.fulfill({ response });
+    });
+    const input = host.locator('#chatInput');
+    const send = host.getByRole('button', { name: 'Отправить сообщение' });
+    const message = 'Сообщение после обрыва ответа';
+    await input.fill(message);
+    await send.click();
+    await expect(host.locator('#toast')).toBeVisible();
+    await expect(guest.getByText(message, { exact: true })).toHaveCount(1);
+    await expect(input).toHaveValue(message);
+    await send.click();
+    await expect(input).toHaveValue('');
+    await expect(guest.getByText(message, { exact: true })).toHaveCount(1);
+    expect(keys).toHaveLength(2);
+    expect(keys[0]).toMatch(/^[a-f0-9]{32}$/);
+    expect(keys[1]).toBe(keys[0]);
+  } finally {
+    await hostContext.close();
+    await guestContext.close();
+  }
+});
+
 test('invalid links show a useful error; YouTube and Twitch queue items are parsed', async ({
   page,
 }) => {

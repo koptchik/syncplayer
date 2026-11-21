@@ -67,11 +67,14 @@ function icon(name) {
   svg.append(use);
   return svg;
 }
-async function api(path, body, method = 'POST', signal) {
+async function api(path, body, method = 'POST', signal, idempotencyKey) {
   const response = await fetch(path, {
     signal,
     method,
-    headers: body === undefined ? {} : { 'Content-Type': 'application/json' },
+    headers: {
+      ...(body === undefined ? {} : { 'Content-Type': 'application/json' }),
+      ...(idempotencyKey ? { 'Idempotency-Key': idempotencyKey } : {}),
+    },
     ...(body === undefined ? {} : { body: JSON.stringify(body) }),
     credentials: 'same-origin',
   });
@@ -83,8 +86,39 @@ async function api(path, body, method = 'POST', signal) {
   }
   return result;
 }
-const roomApi = (suffix, body, method, signal) =>
-  api(`/api/rooms/${room.id}${suffix}`, body, method, signal);
+const roomApi = (suffix, body, method, signal, idempotencyKey) =>
+  api(`/api/rooms/${room.id}${suffix}`, body, method, signal, idempotencyKey);
+const retries = new Map();
+function retryableAdd(operation, input, send) {
+  const pending = retries.get(operation);
+  const sameAction = pending?.roomId === room.id && pending.input === input;
+  if (sameAction && pending.response) return pending.response;
+  const key = sameAction
+    ? pending.key
+    : Array.from(crypto.getRandomValues(new Uint8Array(16)), (byte) =>
+        byte.toString(16).padStart(2, '0'),
+      ).join('');
+  const attempt = { roomId: room.id, input, key };
+  retries.set(operation, attempt);
+  attempt.response = Promise.resolve()
+    .then(() => send(key))
+    .then(
+      (result) => {
+        if (retries.get(operation) === attempt) retries.delete(operation);
+        return result;
+      },
+      (error) => {
+        attempt.response = undefined;
+        throw error;
+      },
+    );
+  return attempt.response;
+}
+function addLink(endpoint, data) {
+  return retryableAdd('media', JSON.stringify(data), (key) =>
+    roomApi(endpoint, data, 'POST', undefined, key),
+  );
+}
 const player = new PlayerController($('#mediaMount'), {
   changed(kind) {
     if (room && connected) scheduleControl(false, kind === 'seek' || kind === 'seeked');
@@ -704,41 +738,47 @@ $('#mediaForm').addEventListener('submit', async (event) => {
       const body = new FormData();
       body.append('video', file);
       $('#uploadProgress').hidden = false;
-      added = await new Promise((resolve, reject) => {
-        const xhr = new XMLHttpRequest();
-        upload = xhr;
-        xhr.open('POST', `/api/rooms/${room.id}/upload`);
-        xhr.timeout = 3600000;
-        xhr.upload.onprogress = (progress) => {
-          if (progress.lengthComputable) {
-            const percent = Math.round((progress.loaded / progress.total) * 100);
-            $('#uploadProgress').value = percent;
-            $('#uploadStatus').textContent =
-              percent === 100 ? 'Обрабатываем видео…' : `Загружаем видео · ${percent}%`;
-          }
-        };
-        xhr.onload = () => {
-          let response;
-          try {
-            response = JSON.parse(xhr.responseText);
-          } catch {
-            reject(new Error('Неожиданный ответ сервера.'));
-            return;
-          }
-          if (xhr.status >= 200 && xhr.status < 300) resolve(response);
-          else reject(new Error(response.error || 'Не удалось загрузить файл.'));
-        };
-        xhr.onerror = () => reject(new Error('Загрузка прервана: проверьте соединение.'));
-        xhr.onabort = () => reject(new Error('Загрузка отменена.'));
-        xhr.ontimeout = () => reject(new Error('Время загрузки истекло.'));
-        xhr.send(body);
-      });
+      added = await retryableAdd(
+        'upload',
+        file,
+        (key) =>
+          new Promise((resolve, reject) => {
+            const xhr = new XMLHttpRequest();
+            upload = xhr;
+            xhr.open('POST', `/api/rooms/${room.id}/upload`);
+            xhr.setRequestHeader('Idempotency-Key', key);
+            xhr.timeout = 3600000;
+            xhr.upload.onprogress = (progress) => {
+              if (progress.lengthComputable) {
+                const percent = Math.round((progress.loaded / progress.total) * 100);
+                $('#uploadProgress').value = percent;
+                $('#uploadStatus').textContent =
+                  percent === 100 ? 'Обрабатываем видео…' : `Загружаем видео · ${percent}%`;
+              }
+            };
+            xhr.onload = () => {
+              let response;
+              try {
+                response = JSON.parse(xhr.responseText);
+              } catch {
+                reject(new Error('Неожиданный ответ сервера.'));
+                return;
+              }
+              if (xhr.status >= 200 && xhr.status < 300) resolve(response);
+              else reject(new Error(response.error || 'Не удалось загрузить файл.'));
+            };
+            xhr.onerror = () => reject(new Error('Загрузка прервана: проверьте соединение.'));
+            xhr.onabort = () => reject(new Error('Загрузка отменена.'));
+            xhr.ontimeout = () => reject(new Error('Время загрузки истекло.'));
+            xhr.send(body);
+          }),
+      );
     } else {
       const input = $('#urlInput').value.trim();
       const catalog = input.startsWith('https://old.yummyani.me/catalog/item/');
       if (catalog)
         $('#uploadStatus').textContent = 'Добавляем страницу и загружаем список источников…';
-      added = await roomApi(catalog ? '/catalog' : '/media', {
+      added = await addLink(catalog ? '/catalog' : '/media', {
         url: input,
         title: $('#mediaTitleInput').value.trim(),
       });
@@ -779,7 +819,10 @@ async function sendMessage(text) {
   }
   if (!text.trim()) return false;
   try {
-    await roomApi('/chat', { text: text.trim() });
+    const message = text.trim();
+    await retryableAdd('chat', message, (key) =>
+      roomApi('/chat', { text: message }, 'POST', undefined, key),
+    );
     return true;
   } catch (error) {
     toast(error.message);
@@ -1141,7 +1184,7 @@ const pageDiscovery = createPageDiscovery({
 createSourceSearch({
   request: (data) => roomApi('/source/search', data, 'POST', AbortSignal.timeout(12000)),
   add: async (url) => {
-    const added = await roomApi('/media', { url });
+    const added = await addLink('/media', { url });
     await finishAddedMedia(added);
   },
 });

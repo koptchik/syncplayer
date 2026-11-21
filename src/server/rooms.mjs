@@ -7,6 +7,13 @@ import path from 'node:path';
 export const randomId = () => randomBytes(16).toString('hex');
 const digest = (token) => createHash('sha256').update(token).digest('hex');
 
+function storageError(error) {
+  console.error('Permanent room storage failed:', error.code || error.name);
+  return ['ENOSPC', 'EDQUOT'].includes(error.code)
+    ? new AppError(507, 'На сервере не хватает места для сохранения комнаты.')
+    : new AppError(503, 'Не удалось сохранить постоянную комнату. Повторите попытку.');
+}
+
 export class RoomStore {
   constructor(config) {
     this.config = config;
@@ -48,11 +55,32 @@ export class RoomStore {
       updatedAt: Date.now(),
     };
     const filename = this.permanentFilename();
-    writeFileSync(`${filename}.tmp`, JSON.stringify({ version: 1, room: data }), {
-      mode: 0o600,
-      flush: true,
-    });
-    renameSync(`${filename}.tmp`, filename);
+    try {
+      writeFileSync(`${filename}.tmp`, JSON.stringify({ version: 1, room: data }), {
+        mode: 0o600,
+        flush: true,
+      });
+      renameSync(`${filename}.tmp`, filename);
+    } catch (error) {
+      throw storageError(error);
+    }
+  }
+  commit(room, mutate) {
+    if (!room.permanent) return mutate(room);
+    // Keep live socket and member identities. Mutations stage membership through the map.
+    const draft = {
+      ...room,
+      members: new Map(room.members),
+      queue: structuredClone(room.queue),
+      messages: structuredClone(room.messages),
+      playback: { ...room.playback },
+      schedule: structuredClone(room.schedule),
+      roulette: structuredClone(room.roulette),
+    };
+    const result = mutate(draft);
+    this.persist(draft);
+    Object.assign(room, draft);
+    return result;
   }
   uploadNames() {
     return new Set(
@@ -89,7 +117,11 @@ export class RoomStore {
   }
   closePermanent(room) {
     if (room.uploading) throw new AppError(409, 'Дождитесь завершения загрузки видео.');
-    unlinkSync(this.permanentFilename());
+    try {
+      unlinkSync(this.permanentFilename());
+    } catch (error) {
+      throw storageError(error);
+    }
     room.permanent = false;
     room.expiresAt = 0;
     room.members.clear();
@@ -104,8 +136,6 @@ export class RoomStore {
         event.revision++;
       }
     }
-    for (const socket of room.sockets)
-      if (socket.member.id === member.id) socket.close(1000, 'Left room');
     const next =
       [...room.members.values()].find((m) => m.connections > 0) || [...room.members.values()][0];
     if (room.hostId === member.id) room.hostId = next?.id || null;
@@ -330,7 +360,6 @@ export class RoomStore {
     };
   }
   broadcast(room) {
-    this.persist(room);
     for (const socket of room.sockets) {
       if (socket.readyState === 1) {
         if (socket.bufferedAmount > 512 * 1024) socket.close(1013, 'Slow connection');

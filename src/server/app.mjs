@@ -4,6 +4,7 @@ import { rateLimit } from 'express-rate-limit';
 import Busboy from 'busboy';
 import { WebSocketServer } from 'ws';
 import { createServer } from 'node:http';
+import { createHash } from 'node:crypto';
 import { createWriteStream } from 'node:fs';
 import { rename } from 'node:fs/promises';
 import { pipeline } from 'node:stream/promises';
@@ -11,6 +12,7 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { ZodError } from 'zod';
 import { RoomStore, randomId } from './rooms.mjs';
+import { requestKey, fingerprint, findReceipt, replay, recordReceipt } from './room-requests.mjs';
 import { openUploads, uploadMimeTypes } from './uploads.mjs';
 import { createOwner, ownerLogin, ownerPassword, verifyOwner } from './room-owner.mjs';
 import { createYummyResolver, catalogMedia, yummyPath } from './yummy.mjs';
@@ -27,6 +29,7 @@ import {
   chatSchema,
   controlSchema,
   idSchema,
+  sourceSchema,
 } from './validation.mjs';
 
 const publicDir = fileURLToPath(new URL('../../public/', import.meta.url));
@@ -192,7 +195,7 @@ export async function createApplication(
     try {
       member = store.authenticate(room, sessionToken(req));
     } catch {
-      const joined = store.join(room, name);
+      const joined = store.commit(room, (draft) => store.join(draft, name));
       member = joined.member;
       setSession(req, res, room, joined.token);
     }
@@ -250,14 +253,26 @@ export async function createApplication(
   app.post('/api/rooms/:id/source/inspect', inspectLimiter, (req, res) => {
     res.json(sources.inspect(req.body));
   });
-  async function addSource(req, res) {
-    const resolved = await sources.resolve(req.body);
-    const media = await enrichMedia(resolved.media, {
-      preserveTitle: Boolean(req.body.title?.trim()),
+  function commitAddition(room, key, hash, mutate) {
+    return store.commit(room, (draft) => {
+      const response = mutate(draft);
+      recordReceipt(draft, key, hash, response);
+      return response;
     });
+  }
+  async function addSource(req, res) {
+    const input = sourceSchema.parse(req.body);
+    const key = requestKey(req, 'media');
+    const hash = key && fingerprint(input);
+    let receipt = findReceipt(req.room, key);
+    if (receipt) return res.status(201).json(replay(receipt, hash));
+    const resolved = await sources.resolve(input);
+    const media = await enrichMedia(resolved.media, { preserveTitle: Boolean(input.title) });
     store.get(req.room.id);
     store.authenticate(req.room, sessionToken(req));
-    const item = store.add(req.room, media);
+    receipt = findReceipt(req.room, key);
+    if (receipt) return res.status(201).json(replay(receipt, hash));
+    const item = commitAddition(req.room, key, hash, (draft) => store.add(draft, media));
     store.broadcast(req.room);
     res.status(201).json(item);
   }
@@ -287,12 +302,14 @@ export async function createApplication(
     const choice = result.options.find((o) => o.id === req.body.variantId && o.supported);
     if (!choice)
       throw new AppError(409, 'Этот вариант больше не доступен. Обновите список плееров.');
-    store.changeVariant(
-      req.room,
-      id,
-      req.body.sourceVersion,
-      { ...catalogMedia(media.catalogUrl, result, choice), catalogTitle: media.catalogTitle },
-      req.member,
+    store.commit(req.room, (draft) =>
+      store.changeVariant(
+        draft,
+        id,
+        req.body.sourceVersion,
+        { ...catalogMedia(media.catalogUrl, result, choice), catalogTitle: media.catalogTitle },
+        req.member,
+      ),
     );
     store.broadcast(req.room);
     res.json(store.snapshot(req.room, req.member));
@@ -308,52 +325,67 @@ export async function createApplication(
     res.json(store.snapshot(req.room, req.member));
   });
   app.post('/api/rooms/:id/leave', mutationLimiter, (req, res) => {
-    store.leave(req.room, req.member);
+    store.commit(req.room, (draft) => store.leave(draft, req.member));
+    for (const socket of req.room.sockets)
+      if (socket.member.id === req.member.id) socket.close(1000, 'Left room');
     clearSession(req, res, req.room);
     store.broadcast(req.room);
     res.json({ ok: true });
   });
   app.post('/api/rooms/:id/chat', chatLimiter, (req, res) => {
     const { text } = chatSchema.parse(req.body);
-    req.room.messages.push({
-      id: randomId(),
-      memberId: req.member.id,
-      name: req.member.name,
-      text,
-      at: Date.now(),
+    const key = requestKey(req, 'chat');
+    const hash = key && fingerprint(text);
+    const receipt = findReceipt(req.room, key);
+    if (receipt) return res.status(201).json(replay(receipt, hash));
+    const result = commitAddition(req.room, key, hash, (draft) => {
+      draft.messages.push({
+        id: randomId(),
+        memberId: req.member.id,
+        name: req.member.name,
+        text,
+        at: Date.now(),
+      });
+      draft.messages = draft.messages.slice(-100);
+      draft.revision++;
+      return { ok: true };
     });
-    req.room.messages = req.room.messages.slice(-100);
-    req.room.revision++;
     store.broadcast(req.room);
-    res.status(201).json({ ok: true });
+    res.status(201).json(result);
   });
   app.post('/api/rooms/:id/roulette/nominate', mutationLimiter, (req, res) => {
-    store.nominate(req.room, idSchema.parse(req.body?.mediaId), req.member);
+    store.commit(req.room, (draft) =>
+      store.nominate(draft, idSchema.parse(req.body?.mediaId), req.member),
+    );
     store.broadcast(req.room);
     res.json(store.snapshot(req.room, req.member));
   });
   app.post('/api/rooms/:id/roulette/draw', mutationLimiter, (req, res) => {
-    store.draw(req.room, req.member);
+    store.commit(req.room, (draft) => store.draw(draft, req.member));
     store.broadcast(req.room);
     res.json(store.snapshot(req.room, req.member));
   });
   app.post('/api/rooms/:id/roulette/reset', mutationLimiter, (req, res) => {
-    store.resetDraw(req.room, req.member);
+    store.commit(req.room, (draft) => store.resetDraw(draft, req.member));
     store.broadcast(req.room);
     res.json(store.snapshot(req.room, req.member));
   });
   app.post('/api/rooms/:id/schedule', mutationLimiter, (req, res) => {
-    proposeSchedule(store, req.room, req.member, req.body);
+    store.commit(req.room, (draft) => proposeSchedule(store, draft, req.member, req.body));
     store.broadcast(req.room);
     res.status(201).json(store.snapshot(req.room, req.member));
   });
   app.post('/api/rooms/:id/schedule/:eventId', mutationLimiter, (req, res) => {
-    actOnSchedule(store, req.room, req.member, idSchema.parse(req.params.eventId), req.body);
+    store.commit(req.room, (draft) =>
+      actOnSchedule(store, draft, req.member, idSchema.parse(req.params.eventId), req.body),
+    );
     store.broadcast(req.room);
     res.json(store.snapshot(req.room, req.member));
   });
   app.post('/api/rooms/:id/control', controlLimiter, (req, res) => {
-    store.control(req.room, controlSchema.parse(req.body), req.member);
+    const command = controlSchema.parse(req.body);
+    if (command.checkpoint) store.control(req.room, command, req.member);
+    else store.commit(req.room, (draft) => store.control(draft, command, req.member));
     store.broadcast(req.room);
     res.json({ ok: true });
   });
@@ -368,33 +400,38 @@ export async function createApplication(
     addSource,
   );
   app.post('/api/rooms/:id/select', mutationLimiter, (req, res) => {
-    store.select(req.room, idSchema.parse(req.body?.mediaId), req.member);
+    store.commit(req.room, (draft) =>
+      store.select(draft, idSchema.parse(req.body?.mediaId), req.member),
+    );
     store.broadcast(req.room);
     res.json({ ok: true });
   });
   app.delete('/api/rooms/:id/media/:mediaId', hostOnly, mutationLimiter, async (req, res) => {
-    store.ensureNotDrawing(req.room);
-    const mediaId = idSchema.parse(req.params.mediaId);
-    if (req.room.roulette)
-      req.room.roulette.nominations = req.room.roulette.nominations.filter(
-        (n) => n.mediaId !== mediaId,
-      );
-    const index = req.room.queue.findIndex((m) => m.id === mediaId);
-    if (index < 0) throw new AppError(404, 'Видео не найдено.');
-    const [media] = req.room.queue.splice(index, 1);
-    if (req.room.playback.mediaId === mediaId) {
-      if (req.room.queue.length)
-        store.select(req.room, req.room.queue[Math.min(index, req.room.queue.length - 1)].id);
-      else
-        req.room.playback = {
-          mediaId: null,
-          playing: false,
-          position: 0,
-          rate: 1,
-          updatedAt: Date.now(),
-        };
-    }
-    req.room.revision++;
+    const media = store.commit(req.room, (draft) => {
+      store.ensureNotDrawing(draft);
+      const mediaId = idSchema.parse(req.params.mediaId);
+      if (draft.roulette)
+        draft.roulette.nominations = draft.roulette.nominations.filter(
+          (n) => n.mediaId !== mediaId,
+        );
+      const index = draft.queue.findIndex((m) => m.id === mediaId);
+      if (index < 0) throw new AppError(404, 'Видео не найдено.');
+      const [media] = draft.queue.splice(index, 1);
+      if (draft.playback.mediaId === mediaId) {
+        if (draft.queue.length)
+          store.select(draft, draft.queue[Math.min(index, draft.queue.length - 1)].id);
+        else
+          draft.playback = {
+            mediaId: null,
+            playing: false,
+            position: 0,
+            rate: 1,
+            updatedAt: Date.now(),
+          };
+      }
+      draft.revision++;
+      return media;
+    });
     store.broadcast(req.room);
     await uploads.remove(media.diskName);
     res.json({ ok: true });
@@ -419,7 +456,10 @@ export async function createApplication(
     if (size > config.maxFileBytes + 65536)
       throw new AppError(413, 'Файл превышает допустимый размер.');
     if (req.room.uploading) throw new AppError(409, 'Дождитесь завершения текущей загрузки.');
-    if (req.room.queue.length >= 100) throw new AppError(409, 'Очередь заполнена.');
+    const key = requestKey(req, 'upload');
+    const receipt = findReceipt(req.room, key);
+    if (!receipt && req.room.queue.length >= 100) throw new AppError(409, 'Очередь заполнена.');
+    const contentHash = key && createHash('sha256');
     let parser;
     try {
       parser = Busboy({
@@ -442,7 +482,7 @@ export async function createApplication(
     };
     const abort = () => parser.destroy(new Error('Upload aborted'));
     try {
-      release = await uploads.reserve(size);
+      release = await uploads.reserve(receipt ? 0 : size);
       if (req.aborted) throw new AppError(400, 'Загрузка прервана.');
       req.once('aborted', abort);
       await new Promise((resolve, reject) => {
@@ -469,9 +509,15 @@ export async function createApplication(
           };
           stream.on('data', (chunk) => {
             media.bytes += chunk.length;
+            contentHash?.update(chunk);
           });
           stream.on('limit', () => fail(new AppError(413, 'Файл превышает допустимый размер.')));
-          file = createWriteStream(uploads.path(partial), { flags: 'wx', mode: 0o600 });
+          if (receipt) return;
+          file = createWriteStream(uploads.path(partial), {
+            flags: 'wx',
+            mode: 0o600,
+            flush: true,
+          });
           file.once('open', () => {
             writtenName = partial;
           });
@@ -489,15 +535,22 @@ export async function createApplication(
       await Promise.all(writes);
       if (problem) throw problem;
       if (!media || !media.bytes) throw new AppError(400, 'Выберите непустой видеофайл.');
-      await rename(uploads.path(writtenName), uploads.path(media.diskName));
-      writtenName = media.diskName;
-      uploads.record(writtenName, file.bytesWritten);
+      const hash = contentHash && fingerprint([media.title, contentHash.digest('hex')]);
+      if (!receipt) {
+        await rename(uploads.path(writtenName), uploads.path(media.diskName));
+        writtenName = media.diskName;
+        uploads.record(writtenName, file.bytesWritten);
+      }
       if (req.room.expiresAt <= Date.now()) throw new AppError(410, 'Срок действия комнаты истёк.');
       store.authenticate(req.room, sessionToken(req));
-      const item = store.add(req.room, media);
+      if (receipt) return res.status(201).json(replay(receipt, hash));
+      const result = commitAddition(req.room, key, hash, (draft) => {
+        const item = store.add(draft, media);
+        return { id: item.id, title: item.title };
+      });
       finished = true;
       store.broadcast(req.room);
-      res.status(201).json({ id: item.id, title: item.title });
+      res.status(201).json(result);
     } finally {
       req.off('aborted', abort);
       await Promise.all(writes);
@@ -574,12 +627,8 @@ export async function createApplication(
     const { room, member } = ws;
     member.connections++;
     room.sockets.add(ws);
-    try {
-      store.broadcast(room);
-    } catch (error) {
-      console.error('Room persistence failed:', error.message);
-    }
     ws.on('error', () => {});
+    store.broadcast(room);
     ws.on('pong', () => {
       ws.alive = true;
     });
@@ -615,11 +664,7 @@ export async function createApplication(
           store.control(room, { ...room.playback, position: store.position(room), playing: false });
         }
       }
-      try {
-        store.broadcast(room);
-      } catch (error) {
-        console.error('Room persistence failed:', error.message);
-      }
+      store.broadcast(room);
     });
   });
   const heartbeat = setInterval(() => {
@@ -659,7 +704,6 @@ export async function createApplication(
     server,
     store,
     async close() {
-      for (const room of store.rooms.values()) store.persist(room);
       clearInterval(heartbeat);
       clearInterval(janitor);
       for (const ws of wss.clients) ws.terminate();
@@ -669,6 +713,13 @@ export async function createApplication(
           server.close(resolve);
           server.closeIdleConnections();
         });
+      for (const room of store.rooms.values()) {
+        try {
+          store.persist(room);
+        } catch (error) {
+          console.error('Could not save room at shutdown:', error.message);
+        }
+      }
     },
   };
 }
